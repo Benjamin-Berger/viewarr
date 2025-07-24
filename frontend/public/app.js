@@ -141,6 +141,10 @@ function App() {
     }
   }, [selectedFolder]);
 
+  const toggleImageInfo = React.useCallback(() => {
+    setShowImageInfo(!showImageInfo);
+  }, [showImageInfo]);
+
   // Handle Escape key to close full-screen modal
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -162,6 +166,15 @@ function App() {
           }
           
           setSelectedPhoto(photos[nextIndex]);
+        } else if (event.key === 'i' || event.key === 'I') {
+          event.preventDefault();
+          toggleImageInfo();
+        }
+      } else {
+        // When not in full-screen mode, 'i' key still toggles info
+        if (event.key === 'i' || event.key === 'I') {
+          event.preventDefault();
+          toggleImageInfo();
         }
       }
     };
@@ -170,7 +183,7 @@ function App() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedPhoto, photos]);
+  }, [selectedPhoto, photos, toggleImageInfo]);
 
   const loadFolders = async () => {
     try {
@@ -218,10 +231,6 @@ function App() {
 
   const handleImageSizeChange = (event) => {
     setImageSize(parseInt(event.target.value));
-  };
-
-  const toggleImageInfo = () => {
-    setShowImageInfo(!showImageInfo);
   };
 
   if (loading && folders.length === 0) {
@@ -373,7 +382,7 @@ function App() {
             className: 'absolute top-4 right-4 z-10 bg-black bg-opacity-50 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-opacity-75 transition-colors'
           }, '✕'),
           // Image info overlay
-          React.createElement('div', {
+          showImageInfo && React.createElement('div', {
             className: 'absolute top-4 left-4 z-10 bg-black bg-opacity-50 text-white rounded-lg p-3 max-w-md'
           },
             React.createElement('h3', { className: 'text-lg font-semibold mb-2' }, selectedPhoto.name),
