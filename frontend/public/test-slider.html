@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Slider Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .slider {
+            -webkit-appearance: none;
+            appearance: none;
+            background: #e5e7eb;
+            outline: none;
+            border-radius: 0.5rem;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+        }
+        
+        .slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 p-8">
+    <div class="max-w-md mx-auto bg-white p-6 rounded-lg shadow">
+        <h1 class="text-xl font-bold mb-4">Slider Test</h1>
+        <div class="flex items-center space-x-2">
+            <span class="text-sm text-gray-600">Size:</span>
+            <input 
+                type="range" 
+                min="100" 
+                max="400" 
+                value="200" 
+                class="w-24 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                onchange="document.getElementById('size-display').textContent = this.value + 'px'"
+            />
+            <span id="size-display" class="text-sm text-gray-600 w-12">200px</span>
+        </div>
+        <p class="mt-4 text-sm text-gray-500">If you can see and interact with this slider, the styling is working correctly.</p>
+    </div>
+</body>
+</html> 

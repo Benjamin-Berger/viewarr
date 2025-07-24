@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Slider Debug</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .slider {
+            -webkit-appearance: none;
+            appearance: none;
+            background: #e5e7eb;
+            outline: none;
+            border-radius: 0.5rem;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+        }
+        
+        .slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <header class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="text-blue-600 text-2xl">📸</div>
+                    <h1 class="text-xl font-semibold text-gray-900">Photo Viewer</h1>
+                    <div class="bg-yellow-200 text-red-800 px-2 py-1 rounded text-xs font-bold">SLIDER DEBUG</div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-sm text-gray-500">
+                        Viewing: <span class="font-medium text-gray-900">Test Folder</span>
+                    </div>
+                    <div class="flex items-center space-x-2 bg-red-200 p-3 rounded border-2 border-red-500">
+                        <span class="text-sm font-bold text-red-800">SIZE:</span>
+                        <input 
+                            type="range" 
+                            min="100" 
+                            max="400" 
+                            value="200" 
+                            class="w-32 h-4 bg-red-300 rounded-lg appearance-none cursor-pointer slider"
+                            onchange="document.getElementById('size-display').textContent = this.value + 'px'"
+                        />
+                        <span id="size-display" class="text-sm font-bold text-red-800 w-16">200px</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <div class="p-8">
+        <h2 class="text-2xl font-bold mb-4">Debug Info</h2>
+        <p>If you can see the red slider in the top right corner above, then the styling is working.</p>
+        <p>If you can't see it, there might be a CSS conflict or the element is being hidden.</p>
+    </div>
+</body>
+</html> 
