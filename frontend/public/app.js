@@ -75,6 +75,7 @@ window.resetLazyLoadingStats = () => {
 // Video Thumbnail Component with Lazy Loading
 const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVideo, showSpeedOverlay, videoSpeed, overlayTarget, originalAspectRatio, onPhotoClick }) => {
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isVideoReady, setIsVideoReady] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [thumbnail, setThumbnail] = useState(null);
@@ -87,6 +88,22 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
   React.useEffect(() => {
     lazyLoadingStats.totalVideos++;
   }, []);
+
+  // Add event listener for video ready state
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      const handleCanPlay = () => {
+        setIsVideoReady(true);
+      };
+      
+      video.addEventListener('canplay', handleCanPlay);
+      
+      return () => {
+        video.removeEventListener('canplay', handleCanPlay);
+      };
+    }
+  }, [isLoaded]);
 
   // Load thumbnail asynchronously
   React.useEffect(() => {
@@ -193,6 +210,7 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
         // Load the video source only when hovered for a moment
         videoRef.current.src = photoApi.getPhotoUrl(photo.path);
         setIsLoaded(true);
+        // Don't set isVideoReady yet - wait for canplay event
         setIsLoading(false);
         lazyLoadingStats.loadedVideos++;
         lazyLoadingStats.hoverLoads++;
@@ -234,6 +252,7 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
       setIsLoading(true);
       videoRef.current.src = photoApi.getPhotoUrl(photo.path);
       setIsLoaded(true);
+      // Don't set isVideoReady yet - wait for canplay event
       setIsLoading(false);
       lazyLoadingStats.loadedVideos++;
       lazyLoadingStats.clickLoads++;
@@ -253,8 +272,8 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' };
 
   return React.createElement('div', { className: 'relative' },
-    // Show thumbnail when video is not loaded
-    !isLoaded && thumbnail && thumbnailStatus === 'ready' ? 
+    // Show thumbnail when video is not ready to play
+    !isVideoReady && thumbnail && thumbnailStatus === 'ready' ? 
       React.createElement('img', {
         src: thumbnail,
         style: thumbnailStyle,
@@ -263,10 +282,10 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
         onMouseLeave: handleMouseLeave,
         onClick: handleClick
       }) : null,
-    // Video element (always rendered, but only visible when loaded)
+    // Video element (always rendered, but only visible when ready to play)
     React.createElement('video', {
       ref: videoRef,
-      style: { ...videoStyle, display: isLoaded ? 'block' : 'none' },
+      style: { ...videoStyle, display: isVideoReady ? 'block' : 'none' },
       preload: 'none', // Don't preload anything
       muted: isMuted,
       loop: true,
@@ -281,7 +300,7 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
       React.createElement('div', { className: 'text-white text-xs' }, 'Generating thumbnail...')
     ),
     // Loading indicator
-    isLoading && React.createElement('div', {
+    (isLoading || (isLoaded && !isVideoReady)) && React.createElement('div', {
       className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 pointer-events-none'
     },
       React.createElement('div', { className: 'text-white text-sm' }, 'Loading...')
@@ -291,11 +310,11 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
       className: 'absolute top-2 left-2 z-20 bg-black bg-opacity-70 text-white px-3 py-1 rounded text-base font-bold pointer-events-none',
       style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
     }, `${videoSpeed.toFixed(2)}x`),
-    // Play button overlay (shows when not hovered or when video not loaded)
+    // Play button overlay (shows when not hovered or when video not ready)
     React.createElement('div', {
       className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none',
       style: { 
-        opacity: (hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path)) || (isHovered && isLoaded) ? 0 : 1, 
+        opacity: (hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path)) || (isHovered && isVideoReady) ? 0 : 1, 
         transition: 'opacity 0.2s' 
       }
     },
