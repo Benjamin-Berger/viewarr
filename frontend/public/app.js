@@ -29,7 +29,7 @@ const formatDate = (timestamp) => {
   return new Date(timestamp * 1000).toLocaleDateString();
 };
 
-const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo }) => {
+const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo, videoSpeed, showSpeedOverlay, overlayTarget }) => {
   const gridStyle = {
     display: 'grid',
     gridTemplateColumns: `repeat(auto-fill, minmax(${imageSize}px, 1fr))`,
@@ -68,6 +68,11 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
                   setHoveredVideo(null);
                 }
               }),
+              // Speed overlay for hovered video
+              showSpeedOverlay && overlayTarget === 'hover' && React.createElement('div', {
+                className: 'absolute top-2 left-2 z-20 bg-black bg-opacity-70 text-white px-3 py-1 rounded text-base font-bold pointer-events-none',
+                style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
+              }, `${videoSpeed.toFixed(2)}x`),
               React.createElement('div', { 
                 className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none'
               },
@@ -140,6 +145,10 @@ function App() {
   const [showImageInfo, setShowImageInfo] = useState(true); // Default to showing info
   const [selectedPhoto, setSelectedPhoto] = useState(null); // For full-screen view
   const [hoveredVideo, setHoveredVideo] = useState(null); // Track hovered video
+  const [videoSpeed, setVideoSpeed] = useState(1); // Current speed for overlay
+  const [showSpeedOverlay, setShowSpeedOverlay] = useState(false); // Overlay visibility
+  const [overlayTarget, setOverlayTarget] = useState(null); // 'hover' or 'fullscreen'
+  const [fillScreen, setFillScreen] = useState(false); // Toggle fill screen mode
 
   useEffect(() => {
     loadFolders();
@@ -152,6 +161,14 @@ function App() {
       setPhotos([]);
     }
   }, [selectedFolder]);
+
+  useEffect(() => {
+    let overlayTimeout;
+    if (showSpeedOverlay) {
+      overlayTimeout = setTimeout(() => setShowSpeedOverlay(false), 700);
+    }
+    return () => clearTimeout(overlayTimeout);
+  }, [showSpeedOverlay]);
 
   const toggleImageInfo = React.useCallback(() => {
     setShowImageInfo(!showImageInfo);
@@ -171,6 +188,42 @@ function App() {
         if (event.key === 'i' || event.key === 'I') {
           event.preventDefault();
           toggleImageInfo();
+          return;
+        }
+        // Toggle fill screen mode
+        if (event.key === 'f' || event.key === 'F') {
+          event.preventDefault();
+          setFillScreen(!fillScreen);
+          return;
+        }
+        // Video speed control for full-screen
+        if (selectedPhoto.type === 'video' && (event.key === 'q' || event.key === 'Q' || event.key === 'e' || event.key === 'E')) {
+          event.preventDefault();
+          const video = document.querySelector('.fixed video');
+          if (video) {
+            let newSpeed = video.playbackRate;
+            if (event.key === 'q' || event.key === 'Q') {
+              newSpeed = Math.max(0.1, Math.round((video.playbackRate - 0.1) * 10) / 10);
+            } else if (event.key === 'e' || event.key === 'E') {
+              newSpeed = Math.min(8.0, Math.round((video.playbackRate + 0.1) * 10) / 10);
+            }
+            video.playbackRate = newSpeed;
+            setVideoSpeed(newSpeed);
+            setOverlayTarget('fullscreen');
+            setShowSpeedOverlay(true);
+          }
+          return;
+        }
+        // Reset speed for full-screen
+        if (selectedPhoto.type === 'video' && (event.key === 'r' || event.key === 'R')) {
+          event.preventDefault();
+          const video = document.querySelector('.fixed video');
+          if (video) {
+            video.playbackRate = 1.0;
+            setVideoSpeed(1.0);
+            setOverlayTarget('fullscreen');
+            setShowSpeedOverlay(true);
+          }
           return;
         }
         // Prevent scrolling
@@ -208,6 +261,28 @@ function App() {
           event.preventDefault();
           toggleImageInfo();
         }
+        // Video speed control for hovered video
+        if (hoveredVideo && (event.key === 'q' || event.key === 'Q' || event.key === 'e' || event.key === 'E')) {
+          event.preventDefault();
+          let newSpeed = hoveredVideo.playbackRate;
+          if (event.key === 'q' || event.key === 'Q') {
+            newSpeed = Math.max(0.1, Math.round((hoveredVideo.playbackRate - 0.1) * 10) / 10);
+          } else if (event.key === 'e' || event.key === 'E') {
+            newSpeed = Math.min(8.0, Math.round((hoveredVideo.playbackRate + 0.1) * 10) / 10);
+          }
+          hoveredVideo.playbackRate = newSpeed;
+          setVideoSpeed(newSpeed);
+          setOverlayTarget('hover');
+          setShowSpeedOverlay(true);
+        }
+        // Reset speed for hovered video
+        if (hoveredVideo && (event.key === 'r' || event.key === 'R')) {
+          event.preventDefault();
+          hoveredVideo.playbackRate = 1.0;
+          setVideoSpeed(1.0);
+          setOverlayTarget('hover');
+          setShowSpeedOverlay(true);
+        }
         // Video seek for hovered video
         if (hoveredVideo && (event.key === 'a' || event.key === 'A')) {
           event.preventDefault();
@@ -227,7 +302,7 @@ function App() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedPhoto, photos, toggleImageInfo, hoveredVideo]);
+  }, [selectedPhoto, photos, toggleImageInfo, hoveredVideo, fillScreen]);
 
   const loadFolders = async () => {
     try {
@@ -292,8 +367,7 @@ function App() {
         React.createElement('div', { className: 'flex items-center justify-between h-16' },
           React.createElement('div', { className: 'flex items-center space-x-3' },
             React.createElement('div', { className: 'text-blue-600 text-2xl' }, '📸'),
-            React.createElement('h1', { className: 'text-xl font-semibold text-gray-900' }, 'Viewarr'),
-            React.createElement('div', { className: 'bg-yellow-200 text-red-800 px-2 py-1 rounded text-xs font-bold' }, 'SLIDER DEBUG')
+            React.createElement('h1', { className: 'text-xl font-semibold text-gray-900' }, 'Viewarr')
           ),
           React.createElement('div', { className: 'flex items-center space-x-4' },
             selectedFolder && 
@@ -306,7 +380,7 @@ function App() {
               React.createElement('input', {
                 type: 'range',
                 min: '100',
-                max: '1000',
+                max: '1500',
                 value: imageSize,
                 onChange: handleImageSizeChange,
                 className: 'w-32 h-4 bg-red-300 rounded-lg appearance-none cursor-pointer slider'
@@ -395,7 +469,10 @@ function App() {
                     onPhotoClick: handlePhotoClick,
                     imageSize: imageSize,
                     showImageInfo: showImageInfo,
-                    setHoveredVideo: setHoveredVideo
+                    setHoveredVideo: setHoveredVideo,
+                    videoSpeed: videoSpeed,
+                    showSpeedOverlay: showSpeedOverlay,
+                    overlayTarget: overlayTarget
                   }) : 
                   React.createElement('div', { className: 'text-center py-12' },
                     React.createElement('div', { className: 'text-gray-300 text-4xl mb-3' }, '📸'),
@@ -421,6 +498,11 @@ function App() {
           className: 'relative max-w-full max-h-full p-4',
           onClick: (e) => e.stopPropagation()
         },
+          // Speed overlay for fullscreen video
+          showSpeedOverlay && overlayTarget === 'fullscreen' && selectedPhoto.type === 'video' && React.createElement('div', {
+            className: 'absolute top-4 left-4 z-20 bg-black bg-opacity-70 text-white px-4 py-2 rounded text-lg font-bold pointer-events-none',
+            style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
+          }, `${videoSpeed.toFixed(2)}x`),
           // Close button
           React.createElement('button', {
             onClick: closeFullScreen,
@@ -442,14 +524,14 @@ function App() {
             React.createElement('img', {
               src: photoApi.getPhotoUrl(selectedPhoto.path),
               alt: selectedPhoto.name,
-              className: 'max-w-full max-h-full object-contain',
-              style: { maxHeight: 'calc(100vh - 2rem)' }
+              className: fillScreen ? 'w-full h-full object-contain' : 'max-w-full max-h-full object-contain',
+              style: fillScreen ? { width: '100vw', height: '100vh' } : { maxHeight: 'calc(100vh - 2rem)' }
             }) :
             React.createElement('video', {
               src: photoApi.getPhotoUrl(selectedPhoto.path),
               controls: true,
-              className: 'max-w-full max-h-full object-contain',
-              style: { maxHeight: 'calc(100vh - 2rem)' },
+              className: fillScreen ? 'w-full h-full object-contain' : 'max-w-full max-h-full object-contain',
+              style: fillScreen ? { width: '100vw', height: '100vh' } : { maxHeight: 'calc(100vh - 2rem)' },
               autoPlay: true
             })
         )
