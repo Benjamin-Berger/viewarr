@@ -29,7 +29,7 @@ const formatDate = (timestamp) => {
   return new Date(timestamp * 1000).toLocaleDateString();
 };
 
-const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo }) => {
+const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo }) => {
   const gridStyle = {
     display: 'grid',
     gridTemplateColumns: `repeat(auto-fill, minmax(${imageSize}px, 1fr))`,
@@ -55,10 +55,21 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo }) => {
               React.createElement('video', {
                 src: photoApi.getPhotoUrl(photo.path),
                 style: { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' },
-                preload: 'metadata'
+                preload: 'metadata',
+                muted: true,
+                loop: true,
+                onMouseEnter: (e) => {
+                  e.target.play().catch(() => {});
+                  setHoveredVideo(e.target);
+                },
+                onMouseLeave: (e) => {
+                  e.target.pause();
+                  e.target.currentTime = 0;
+                  setHoveredVideo(null);
+                }
               }),
               React.createElement('div', { 
-                className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30'
+                className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none'
               },
                 React.createElement('div', { className: 'text-white text-4xl' }, '▶')
               )
@@ -128,6 +139,7 @@ function App() {
   const [imageSize, setImageSize] = useState(200); // Default size in pixels
   const [showImageInfo, setShowImageInfo] = useState(true); // Default to showing info
   const [selectedPhoto, setSelectedPhoto] = useState(null); // For full-screen view
+  const [hoveredVideo, setHoveredVideo] = useState(null); // Track hovered video
 
   useEffect(() => {
     loadFolders();
@@ -149,10 +161,21 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (selectedPhoto) {
+        // Always allow Escape to close full-screen first
         if (event.key === 'Escape') {
+          event.preventDefault();
           closeFullScreen();
-        } else if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) {
-          event.preventDefault(); // Prevent scrolling
+          return;
+        }
+        // Always allow info toggle next
+        if (event.key === 'i' || event.key === 'I') {
+          event.preventDefault();
+          toggleImageInfo();
+          return;
+        }
+        // Prevent scrolling
+        if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) {
+          event.preventDefault();
           
           const currentIndex = photos.findIndex(photo => photo.path === selectedPhoto.path);
           let nextIndex;
@@ -166,15 +189,36 @@ function App() {
           }
           
           setSelectedPhoto(photos[nextIndex]);
-        } else if (event.key === 'i' || event.key === 'I') {
+        } else if (selectedPhoto.type === 'video' && (event.key === 'a' || event.key === 'A')) {
           event.preventDefault();
-          toggleImageInfo();
+          const video = document.querySelector('.fixed video');
+          if (video && video.readyState >= 1) {
+            video.currentTime = Math.max(0, video.currentTime - 5);
+          }
+        } else if (selectedPhoto.type === 'video' && (event.key === 'd' || event.key === 'D')) {
+          event.preventDefault();
+          const video = document.querySelector('.fixed video');
+          if (video && video.readyState >= 1 && video.duration) {
+            video.currentTime = Math.min(video.duration, video.currentTime + 5);
+          }
         }
       } else {
         // When not in full-screen mode, 'i' key still toggles info
         if (event.key === 'i' || event.key === 'I') {
           event.preventDefault();
           toggleImageInfo();
+        }
+        // Video seek for hovered video
+        if (hoveredVideo && (event.key === 'a' || event.key === 'A')) {
+          event.preventDefault();
+          if (hoveredVideo.readyState >= 1) {
+            hoveredVideo.currentTime = Math.max(0, hoveredVideo.currentTime - 5);
+          }
+        } else if (hoveredVideo && (event.key === 'd' || event.key === 'D')) {
+          event.preventDefault();
+          if (hoveredVideo.readyState >= 1 && hoveredVideo.duration) {
+            hoveredVideo.currentTime = Math.min(hoveredVideo.duration, hoveredVideo.currentTime + 5);
+          }
         }
       }
     };
@@ -183,7 +227,7 @@ function App() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedPhoto, photos, toggleImageInfo]);
+  }, [selectedPhoto, photos, toggleImageInfo, hoveredVideo]);
 
   const loadFolders = async () => {
     try {
@@ -350,7 +394,8 @@ function App() {
                     photos: photos, 
                     onPhotoClick: handlePhotoClick,
                     imageSize: imageSize,
-                    showImageInfo: showImageInfo
+                    showImageInfo: showImageInfo,
+                    setHoveredVideo: setHoveredVideo
                   }) : 
                   React.createElement('div', { className: 'text-center py-12' },
                     React.createElement('div', { className: 'text-gray-300 text-4xl mb-3' }, '📸'),

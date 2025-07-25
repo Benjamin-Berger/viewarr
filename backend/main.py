@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -109,25 +109,47 @@ async def get_photos(folder_path: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error getting photos: {str(e)}")
 
 @app.get("/api/photo/{file_path:path}")
-async def serve_photo(file_path: str):
-    """Serve a specific photo file."""
+async def serve_photo(file_path: str, request: Request):
+    """Serve a specific photo or video file, with HTTP Range support for videos."""
     try:
         full_path = Path(PHOTOS_DIR) / file_path
-        
         if not full_path.exists() or not full_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
-        
         # Security check: ensure file is within photos directory
         try:
             full_path.resolve().relative_to(Path(PHOTOS_DIR).resolve())
         except ValueError:
             raise HTTPException(status_code=403, detail="Access denied")
-        
         # Determine content type
         content_type, _ = mimetypes.guess_type(str(full_path))
         if not content_type:
             content_type = "application/octet-stream"
-        
+        # If it's a video and Range header is present, handle partial content
+        if full_path.suffix.lower() in VIDEO_EXTENSIONS:
+            range_header = request.headers.get("range")
+            file_size = full_path.stat().st_size
+            if range_header:
+                # Example: Range: bytes=0-1023
+                bytes_range = range_header.replace("bytes=", "").split("-")
+                try:
+                    start = int(bytes_range[0]) if bytes_range[0] else 0
+                    end = int(bytes_range[1]) if len(bytes_range) > 1 and bytes_range[1] else file_size - 1
+                except ValueError:
+                    start = 0
+                    end = file_size - 1
+                end = min(end, file_size - 1)
+                chunk_size = end - start + 1
+                with open(full_path, "rb") as f:
+                    f.seek(start)
+                    data = f.read(chunk_size)
+                headers = {
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(chunk_size),
+                    "Content-Type": content_type,
+                }
+                return Response(data, status_code=206, headers=headers)
+        # Fallback: serve whole file
         return FileResponse(
             path=str(full_path),
             media_type=content_type,
