@@ -66,15 +66,51 @@ async def list_folders() -> List[Dict[str, Any]]:
                 file_count = sum(1 for f in item.iterdir() 
                                if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS)
                 
+                # Check if folder has subfolders
+                subfolder_count = sum(1 for f in item.iterdir() if f.is_dir())
+                
                 folders.append({
                     "name": item.name,
                     "path": str(item.relative_to(photos_path)),
-                    "file_count": file_count
+                    "file_count": file_count,
+                    "has_subfolders": subfolder_count > 0
                 })
         
         return sorted(folders, key=lambda x: x["name"].lower())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing folders: {str(e)}")
+
+@app.get("/api/subfolders/{folder_path:path}")
+async def list_subfolders(folder_path: str) -> List[Dict[str, Any]]:
+    """List subfolders within a specific folder."""
+    try:
+        folder_full_path = Path(PHOTOS_DIR) / folder_path
+        
+        if not folder_full_path.exists() or not folder_full_path.is_dir():
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        subfolders = []
+        for item in folder_full_path.iterdir():
+            if item.is_dir():
+                # Count files in subfolder
+                file_count = sum(1 for f in item.iterdir() 
+                               if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS)
+                
+                # Check if subfolder has its own subfolders
+                subfolder_count = sum(1 for f in item.iterdir() if f.is_dir())
+                
+                subfolders.append({
+                    "name": item.name,
+                    "path": str(item.relative_to(Path(PHOTOS_DIR))),
+                    "file_count": file_count,
+                    "has_subfolders": subfolder_count > 0
+                })
+        
+        return sorted(subfolders, key=lambda x: x["name"].lower())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing subfolders: {str(e)}")
 
 @app.get("/api/photos/{folder_path:path}")
 async def get_photos(folder_path: str) -> Dict[str, Any]:

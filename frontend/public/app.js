@@ -7,6 +7,10 @@ const photoApi = {
     const response = await axios.get(`${API_BASE_URL}/api/folders`);
     return response.data;
   },
+  getSubfolders: async (folderPath) => {
+    const response = await axios.get(`${API_BASE_URL}/api/subfolders/${folderPath}`);
+    return response.data;
+  },
   getPhotos: async (folderPath) => {
     const response = await axios.get(`${API_BASE_URL}/api/photos/${folderPath}`);
     return response.data;
@@ -29,7 +33,7 @@ const formatDate = (timestamp) => {
   return new Date(timestamp * 1000).toLocaleDateString();
 };
 
-const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo, videoSpeed, showSpeedOverlay, overlayTarget, originalAspectRatio }) => {
+const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo, hoveredVideo, videoSpeed, showSpeedOverlay, overlayTarget, originalAspectRatio, isMuted }) => {
   // Row-first masonry logic
   if (originalAspectRatio) {
     // Calculate number of columns based on window width and imageSize
@@ -73,7 +77,7 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
                       src: photoApi.getPhotoUrl(photo.path),
                       style: { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' },
                       preload: 'metadata',
-                      muted: true,
+                      muted: isMuted,
                       loop: true,
                       onMouseEnter: (e) => {
                         e.target.play().catch(() => {});
@@ -91,7 +95,8 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
                       style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
                     }, `${videoSpeed.toFixed(2)}x`),
                     React.createElement('div', {
-                      className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none'
+                      className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none',
+                      style: { opacity: hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path) ? 0 : 1, transition: 'opacity 0.2s' }
                     },
                       React.createElement('div', { className: 'text-white text-4xl' }, '▶')
                     )
@@ -146,7 +151,7 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
                 src: photoApi.getPhotoUrl(photo.path),
                 style: { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' },
                 preload: 'metadata',
-                muted: true,
+                muted: isMuted,
                 loop: true,
                 onMouseEnter: (e) => {
                   e.target.play().catch(() => {});
@@ -164,7 +169,8 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
                 style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
               }, `${videoSpeed.toFixed(2)}x`),
               React.createElement('div', {
-                className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none'
+                className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none',
+                style: { opacity: hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path) ? 0 : 1, transition: 'opacity 0.2s' }
               },
                 React.createElement('div', { className: 'text-white text-4xl' }, '▶')
               )
@@ -190,29 +196,186 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
   );
 };
 
-const FolderList = ({ folders, selectedFolder, onFolderSelect }) => {
-  return React.createElement('div', { className: 'divide-y divide-gray-200' },
-    folders.map((folder) =>
+const FolderList = ({ folders, selectedFolder, onFolderSelect, expandedFolders, setExpandedFolders, subfolders, setSubfolders, selectedFolders, setSelectedFolders, loadPhotosFromMultipleFolders }) => {
+  // Helper function to get all subfolder paths recursively
+  const getAllSubfolderPaths = async (folderPath) => {
+    const paths = [];
+    
+    try {
+      // Fetch subfolders for this path if not already cached
+      let folderSubfolders = subfolders[folderPath];
+      if (!folderSubfolders) {
+        folderSubfolders = await photoApi.getSubfolders(folderPath);
+        setSubfolders(prev => ({ ...prev, [folderPath]: folderSubfolders }));
+      }
+      
+      for (const subfolder of folderSubfolders) {
+        paths.push(subfolder.path);
+        // Recursively get subfolders of this subfolder
+        const subPaths = await getAllSubfolderPaths(subfolder.path);
+        paths.push(...subPaths);
+      }
+    } catch (error) {
+      console.error(`Error getting subfolders for ${folderPath}:`, error);
+    }
+    
+    return paths;
+  };
+
+  const toggleFolder = async (folder) => {
+    const isExpanded = expandedFolders.has(folder.path);
+    
+    if (isExpanded) {
+      // Collapse folder
+      const newExpanded = new Set(expandedFolders);
+      newExpanded.delete(folder.path);
+      setExpandedFolders(newExpanded);
+    } else {
+      // Expand folder and load subfolders
+      const newExpanded = new Set(expandedFolders);
+      newExpanded.add(folder.path);
+      setExpandedFolders(newExpanded);
+      
+      // Load subfolders if not already cached
+      if (!subfolders[folder.path]) {
+        try {
+          const subfolderData = await photoApi.getSubfolders(folder.path);
+          setSubfolders(prev => ({ ...prev, [folder.path]: subfolderData }));
+        } catch (error) {
+          console.error('Error loading subfolders:', error);
+        }
+      }
+    }
+  };
+
+  const renderFolder = (folder, level = 0) => {
+    const getAllSubfolderPaths = async (folderPath) => {
+      const paths = [];
+      
+      try {
+        // Fetch subfolders for this path if not already cached
+        let folderSubfolders = subfolders[folderPath];
+        if (!folderSubfolders) {
+          folderSubfolders = await photoApi.getSubfolders(folderPath);
+          setSubfolders(prev => ({ ...prev, [folderPath]: folderSubfolders }));
+        }
+        
+        for (const subfolder of folderSubfolders) {
+          paths.push(subfolder.path);
+          // Recursively get subfolders of this subfolder
+          const subPaths = await getAllSubfolderPaths(subfolder.path);
+          paths.push(...subPaths);
+        }
+      } catch (error) {
+        console.error(`Error getting subfolders for ${folderPath}:`, error);
+      }
+      
+      return paths;
+    };
+    const isExpanded = expandedFolders.has(folder.path);
+    const folderSubfolders = subfolders[folder.path] || [];
+    const hasSubfolders = folder.has_subfolders;
+    const isChecked = selectedFolders.has(folder.path);
+    
+    const handleFolderClick = () => {
+      // Clear all checkboxes when clicking on folder area
+      setSelectedFolders(new Set());
+      onFolderSelect(folder);
+    };
+    
+    const handleCheckboxClick = async (e) => {
+      e.stopPropagation();
+      const newSelected = new Set(selectedFolders);
+      
+      // Check if this folder is collapsed and has subfolders
+      const isCollapsed = !expandedFolders.has(folder.path);
+      const hasSubfolders = folder.has_subfolders;
+      
+      if (isCollapsed && hasSubfolders) {
+        // If collapsed and has subfolders, toggle all subfolders recursively
+        const allSubfolderPaths = await getAllSubfolderPaths(folder.path);
+        console.log('Collapsed folder with subfolders detected. All subfolder paths:', allSubfolderPaths);
+        
+        if (isChecked) {
+          // Remove this folder and all its subfolders
+          newSelected.delete(folder.path);
+          allSubfolderPaths.forEach(path => newSelected.delete(path));
+        } else {
+          // Add this folder and all its subfolders
+          newSelected.add(folder.path);
+          allSubfolderPaths.forEach(path => newSelected.add(path));
+        }
+      } else {
+        // Normal single folder toggle
+        if (isChecked) {
+          newSelected.delete(folder.path);
+        } else {
+          newSelected.add(folder.path);
+        }
+      }
+      
+      setSelectedFolders(newSelected);
+      
+      console.log('Checkbox clicked for folder:', folder.path);
+      console.log('Is collapsed:', isCollapsed, 'Has subfolders:', hasSubfolders);
+      console.log('New selected folders:', Array.from(newSelected));
+      
+      // Clear the selected folder when using checkboxes
+      onFolderSelect(null);
+      
+      // Load photos from all selected folders
+      if (newSelected.size > 0) {
+        console.log('Calling loadPhotosFromMultipleFolders with:', Array.from(newSelected));
+        loadPhotosFromMultipleFolders(Array.from(newSelected));
+      } else {
+        // Clear photos when no folders are selected
+        console.log('No folders selected, clearing photos');
+        setPhotos([]);
+      }
+    };
+    
+    return React.createElement('div', { key: folder.path },
       React.createElement('div', {
-        key: folder.path,
         className: `p-4 cursor-pointer transition-colors duration-200 ${
           selectedFolder === folder.path
             ? 'bg-blue-50 border-r-2 border-blue-500'
             : 'hover:bg-gray-50'
         }`,
-        onClick: () => onFolderSelect(folder)
+        style: { paddingLeft: `${level * 16 + 16}px` },
+        onClick: handleFolderClick
       },
         React.createElement('div', { className: 'flex items-center space-x-3' },
+          hasSubfolders && React.createElement('button', {
+            className: `text-gray-400 hover:text-gray-600 transition-transform ${isExpanded ? 'rotate-90' : ''}`,
+            onClick: (e) => {
+              e.stopPropagation();
+              toggleFolder(folder);
+            },
+            style: { width: '16px', height: '16px' }
+          }, '▶'),
           React.createElement('div', { className: 'text-gray-500 text-lg' }, '📁'),
           React.createElement('div', { className: 'flex-1 min-w-0' },
             React.createElement('p', { className: 'text-sm font-medium text-gray-900 truncate' }, folder.name),
             React.createElement('p', { className: 'text-xs text-gray-500' },
               `${folder.file_count} ${folder.file_count === 1 ? 'file' : 'files'}`
             )
-          )
+          ),
+          React.createElement('input', {
+            type: 'checkbox',
+            checked: isChecked,
+            onChange: handleCheckboxClick,
+            className: 'ml-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded',
+            onClick: (e) => e.stopPropagation()
+          })
         )
-      )
-    ),
+      ),
+      // Render subfolders if expanded
+      isExpanded && folderSubfolders.map(subfolder => renderFolder(subfolder, level + 1))
+    );
+  };
+
+  return React.createElement('div', { className: 'divide-y divide-gray-200' },
+    folders.map(folder => renderFolder(folder)),
     folders.length === 0 &&
       React.createElement('div', { className: 'p-8 text-center' },
         React.createElement('div', { className: 'text-gray-300 text-4xl mb-3' }, '📁'),
@@ -240,6 +403,10 @@ function App() {
   const [overlayTarget, setOverlayTarget] = useState(null); // 'hover' or 'fullscreen'
   const [fillScreen, setFillScreen] = useState(false); // Toggle fill screen mode
   const [originalAspectRatio, setOriginalAspectRatio] = useState(false); // Toggle original aspect ratio in grid
+  const [isMuted, setIsMuted] = useState(true); // Track mute state for videos
+  const [expandedFolders, setExpandedFolders] = useState(new Set()); // Track which folders are expanded
+  const [subfolders, setSubfolders] = useState({}); // Cache subfolders by parent folder path
+  const [selectedFolders, setSelectedFolders] = useState(new Set()); // Track which folders are checked
 
   useEffect(() => {
     loadFolders();
@@ -317,6 +484,16 @@ function App() {
           }
           return;
         }
+        // Toggle mute for full-screen video
+        if (selectedPhoto.type === 'video' && (event.key === 'm' || event.key === 'M')) {
+          event.preventDefault();
+          const video = document.querySelector('.fixed video');
+          if (video) {
+            video.muted = !video.muted;
+            setIsMuted(video.muted);
+          }
+          return;
+        }
         // Prevent scrolling
         if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) {
           event.preventDefault();
@@ -391,6 +568,12 @@ function App() {
             hoveredVideo.currentTime = Math.min(hoveredVideo.duration, hoveredVideo.currentTime + 5);
           }
         }
+        // Toggle mute for hovered video
+        if (hoveredVideo && (event.key === 'm' || event.key === 'M')) {
+          event.preventDefault();
+          hoveredVideo.muted = !hoveredVideo.muted;
+          setIsMuted(hoveredVideo.muted);
+        }
       }
     };
 
@@ -428,8 +611,47 @@ function App() {
     }
   };
 
+  const loadPhotosFromMultipleFolders = async (folderPaths) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      console.log('Loading photos from multiple folders:', folderPaths);
+      
+      // Load photos from all selected folders
+      const allPhotos = [];
+      for (const folderPath of folderPaths) {
+        try {
+          const photoData = await photoApi.getPhotos(folderPath);
+          console.log(`Loaded ${photoData.photos.length} photos from ${folderPath}`);
+          allPhotos.push(...photoData.photos);
+        } catch (err) {
+          console.error(`Error loading photos from ${folderPath}:`, err);
+        }
+      }
+      
+      console.log(`Total photos loaded: ${allPhotos.length}`);
+      
+      // Sort all photos by name
+      allPhotos.sort((a, b) => a.name.localeCompare(b.name));
+      setPhotos(allPhotos);
+    } catch (err) {
+      setError('Failed to load photos from selected folders.');
+      console.error('Error loading photos from multiple folders:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleFolderSelect = (folder) => {
-    setSelectedFolder(folder);
+    if (folder === null) {
+      // Clear selected folder when using checkboxes
+      setSelectedFolder(null);
+    } else {
+      setSelectedFolder(folder);
+      // Clear all checkboxes when selecting a single folder
+      setSelectedFolders(new Set());
+    }
   };
 
   const handlePhotoClick = (photo) => {
@@ -466,10 +688,17 @@ function App() {
             React.createElement('h1', { className: 'text-xl font-semibold text-gray-900' }, 'Viewarr')
           ),
           React.createElement('div', { className: 'flex items-center space-x-4' },
-            selectedFolder &&
+            selectedFolder && selectedFolders.size === 0 &&
               React.createElement('div', { className: 'text-sm text-gray-500' },
                 'Viewing: ',
                 React.createElement('span', { className: 'font-medium text-gray-900' }, selectedFolder.name)
+              ),
+            selectedFolders.size > 0 &&
+              React.createElement('div', { className: 'text-sm text-gray-500' },
+                'Viewing: ',
+                React.createElement('span', { className: 'font-medium text-gray-900' }, 
+                  `${selectedFolders.size} selected folder${selectedFolders.size === 1 ? '' : 's'}`
+                )
               ),
             React.createElement('div', { className: 'flex items-center space-x-2 bg-red-200 p-3 rounded border-2 border-red-500' },
               React.createElement('span', { className: 'text-sm font-bold text-red-800' }, 'SIZE:'),
@@ -514,6 +743,22 @@ function App() {
                 })
               ),
               React.createElement('span', { className: 'text-sm font-bold text-blue-800 w-12' }, originalAspectRatio ? 'ORIG' : 'FIT')
+            ),
+            React.createElement('div', { className: 'flex items-center space-x-2 bg-purple-200 p-3 rounded border-2 border-purple-500' },
+              React.createElement('span', { className: 'text-sm font-bold text-purple-800' }, 'AUDIO:'),
+              React.createElement('button', {
+                onClick: () => setIsMuted(!isMuted),
+                className: `relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  !isMuted ? 'bg-purple-600' : 'bg-gray-300'
+                }`
+              },
+                React.createElement('span', {
+                  className: `inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    !isMuted ? 'translate-x-6' : 'translate-x-1'
+                  }`
+                })
+              ),
+              React.createElement('span', { className: 'text-sm font-bold text-purple-800 w-12' }, !isMuted ? 'ON' : 'OFF')
             )
           )
         )
@@ -536,7 +781,14 @@ function App() {
         !sidebarCollapsed && React.createElement(FolderList, {
           folders: folders,
           selectedFolder: selectedFolder?.path,
-          onFolderSelect: handleFolderSelect
+          onFolderSelect: handleFolderSelect,
+          expandedFolders: expandedFolders,
+          setExpandedFolders: setExpandedFolders,
+          subfolders: subfolders,
+          setSubfolders: setSubfolders,
+          selectedFolders: selectedFolders,
+          setSelectedFolders: setSelectedFolders,
+          loadPhotosFromMultipleFolders: loadPhotosFromMultipleFolders
         }),
         sidebarCollapsed && React.createElement('div', { className: 'p-2' },
           folders.map((folder) =>
@@ -549,7 +801,7 @@ function App() {
               }`,
               onClick: () => handleFolderSelect(folder),
               title: folder.name
-            }, '📁')
+            }, folder.has_subfolders ? '📂' : '📁')
           )
         )
       ),
@@ -562,10 +814,12 @@ function App() {
               className: 'mt-2 text-sm text-red-600 hover:text-red-800 underline'
             }, 'Try again')
           ) :
-          selectedFolder ?
+          (selectedFolder || selectedFolders.size > 0) ?
             React.createElement('div', null,
               React.createElement('div', { className: 'mb-6' },
-                React.createElement('h2', { className: 'text-2xl font-bold text-gray-900 mb-2' }, selectedFolder.name),
+                React.createElement('h2', { className: 'text-2xl font-bold text-gray-900 mb-2' }, 
+                  selectedFolder ? selectedFolder.name : `${selectedFolders.size} selected folder${selectedFolders.size === 1 ? '' : 's'}`
+                ),
                 React.createElement('p', { className: 'text-gray-600' },
                   `${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}`
                 )
@@ -582,10 +836,12 @@ function App() {
                     imageSize: imageSize,
                     showImageInfo: showImageInfo,
                     setHoveredVideo: setHoveredVideo,
+                    hoveredVideo: hoveredVideo,
                     videoSpeed: videoSpeed,
                     showSpeedOverlay: showSpeedOverlay,
                     overlayTarget: overlayTarget,
-                    originalAspectRatio: originalAspectRatio
+                    originalAspectRatio: originalAspectRatio,
+                    isMuted: isMuted
                   }) :
                   React.createElement('div', { className: 'text-center py-12' },
                     React.createElement('div', { className: 'text-gray-300 text-4xl mb-3' }, '📸'),
@@ -643,6 +899,7 @@ function App() {
             React.createElement('video', {
               src: photoApi.getPhotoUrl(selectedPhoto.path),
               controls: true,
+              muted: isMuted,
               className: fillScreen ? 'w-full h-full object-contain' : 'max-w-full max-h-full object-contain',
               style: fillScreen ? { width: '100vw', height: '100vh' } : { maxHeight: 'calc(100vh - 2rem)' },
               autoPlay: true
