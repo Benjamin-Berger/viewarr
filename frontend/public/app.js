@@ -29,7 +29,97 @@ const formatDate = (timestamp) => {
   return new Date(timestamp * 1000).toLocaleDateString();
 };
 
-const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo, videoSpeed, showSpeedOverlay, overlayTarget }) => {
+const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo, videoSpeed, showSpeedOverlay, overlayTarget, originalAspectRatio }) => {
+  // Row-first masonry logic
+  if (originalAspectRatio) {
+    // Calculate number of columns based on window width and imageSize
+    const columnCount = Math.max(1, Math.floor(window.innerWidth / (imageSize + 16)));
+    // Distribute photos into columns row-first
+    const columns = Array.from({ length: columnCount }, () => []);
+    photos.forEach((photo, idx) => {
+      columns[idx % columnCount].push(photo);
+    });
+    // Render columns
+    return React.createElement('div', {
+      style: {
+        display: 'flex',
+        gap: '0.5rem',
+        alignItems: 'flex-start',
+        width: '100%'
+      }
+    },
+      columns.map((col, colIdx) =>
+        React.createElement('div', {
+          key: colIdx,
+          style: { flex: 1, minWidth: 0 }
+        },
+          col.map((photo) =>
+            React.createElement('div', {
+              key: photo.path,
+              className: 'photo-card cursor-pointer',
+              style: { marginBottom: '0.5rem' },
+              onClick: () => onPhotoClick?.(photo)
+            },
+              React.createElement('div', { className: 'relative' },
+                photo.type === 'image' ?
+                  React.createElement('img', {
+                    src: photoApi.getPhotoUrl(photo.path),
+                    alt: photo.name,
+                    style: { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' },
+                    loading: 'lazy'
+                  }) :
+                  React.createElement('div', { className: 'relative' },
+                    React.createElement('video', {
+                      src: photoApi.getPhotoUrl(photo.path),
+                      style: { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' },
+                      preload: 'metadata',
+                      muted: true,
+                      loop: true,
+                      onMouseEnter: (e) => {
+                        e.target.play().catch(() => {});
+                        setHoveredVideo(e.target);
+                      },
+                      onMouseLeave: (e) => {
+                        e.target.pause();
+                        e.target.currentTime = 0;
+                        setHoveredVideo(null);
+                      }
+                    }),
+                    // Speed overlay for hovered video
+                    showSpeedOverlay && overlayTarget === 'hover' && React.createElement('div', {
+                      className: 'absolute top-2 left-2 z-20 bg-black bg-opacity-70 text-white px-3 py-1 rounded text-base font-bold pointer-events-none',
+                      style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
+                    }, `${videoSpeed.toFixed(2)}x`),
+                    React.createElement('div', {
+                      className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none'
+                    },
+                      React.createElement('div', { className: 'text-white text-4xl' }, '▶')
+                    )
+                  ),
+                React.createElement('div', { className: 'absolute top-2 right-2' },
+                  photo.type === 'image' ?
+                    React.createElement('div', { className: 'text-white drop-shadow text-sm' }, '📷') :
+                    React.createElement('div', { className: 'text-white drop-shadow text-sm' }, '▶')
+                )
+              ),
+              showImageInfo && React.createElement('div', { className: 'p-3' },
+                React.createElement('h3', {
+                  className: 'text-sm font-medium text-gray-900 truncate',
+                  title: photo.name
+                }, photo.name),
+                React.createElement('div', { className: 'flex justify-between items-center mt-1 text-xs text-gray-500' },
+                  React.createElement('span', null, formatFileSize(photo.size)),
+                  React.createElement('span', null, formatDate(photo.modified))
+                )
+              )
+            )
+          )
+        )
+      )
+    );
+  }
+
+  // Default grid layout
   const gridStyle = {
     display: 'grid',
     gridTemplateColumns: `repeat(auto-fill, minmax(${imageSize}px, 1fr))`,
@@ -37,14 +127,14 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
   };
 
   return React.createElement('div', { style: gridStyle },
-    photos.map((photo) => 
+    photos.map((photo) =>
       React.createElement('div', {
         key: photo.path,
         className: 'photo-card cursor-pointer',
         onClick: () => onPhotoClick?.(photo)
       },
         React.createElement('div', { className: 'relative' },
-          photo.type === 'image' ? 
+          photo.type === 'image' ?
             React.createElement('img', {
               src: photoApi.getPhotoUrl(photo.path),
               alt: photo.name,
@@ -73,7 +163,7 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
                 className: 'absolute top-2 left-2 z-20 bg-black bg-opacity-70 text-white px-3 py-1 rounded text-base font-bold pointer-events-none',
                 style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
               }, `${videoSpeed.toFixed(2)}x`),
-              React.createElement('div', { 
+              React.createElement('div', {
                 className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none'
               },
                 React.createElement('div', { className: 'text-white text-4xl' }, '▶')
@@ -86,7 +176,7 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
           )
         ),
         showImageInfo && React.createElement('div', { className: 'p-3' },
-          React.createElement('h3', { 
+          React.createElement('h3', {
             className: 'text-sm font-medium text-gray-900 truncate',
             title: photo.name
           }, photo.name),
@@ -123,7 +213,7 @@ const FolderList = ({ folders, selectedFolder, onFolderSelect }) => {
         )
       )
     ),
-    folders.length === 0 && 
+    folders.length === 0 &&
       React.createElement('div', { className: 'p-8 text-center' },
         React.createElement('div', { className: 'text-gray-300 text-4xl mb-3' }, '📁'),
         React.createElement('p', { className: 'text-gray-500' }, 'No folders found'),
@@ -149,6 +239,7 @@ function App() {
   const [showSpeedOverlay, setShowSpeedOverlay] = useState(false); // Overlay visibility
   const [overlayTarget, setOverlayTarget] = useState(null); // 'hover' or 'fullscreen'
   const [fillScreen, setFillScreen] = useState(false); // Toggle fill screen mode
+  const [originalAspectRatio, setOriginalAspectRatio] = useState(false); // Toggle original aspect ratio in grid
 
   useEffect(() => {
     loadFolders();
@@ -229,10 +320,10 @@ function App() {
         // Prevent scrolling
         if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) {
           event.preventDefault();
-          
+
           const currentIndex = photos.findIndex(photo => photo.path === selectedPhoto.path);
           let nextIndex;
-          
+
           if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
             // Previous image
             nextIndex = currentIndex > 0 ? currentIndex - 1 : photos.length - 1;
@@ -240,7 +331,7 @@ function App() {
             // Next image
             nextIndex = currentIndex < photos.length - 1 ? currentIndex + 1 : 0;
           }
-          
+
           setSelectedPhoto(photos[nextIndex]);
         } else if (selectedPhoto.type === 'video' && (event.key === 'a' || event.key === 'A')) {
           event.preventDefault();
@@ -260,6 +351,11 @@ function App() {
         if (event.key === 'i' || event.key === 'I') {
           event.preventDefault();
           toggleImageInfo();
+        }
+        // Toggle original aspect ratio in grid
+        if (event.key === 'p' || event.key === 'P') {
+          event.preventDefault();
+          setOriginalAspectRatio(!originalAspectRatio);
         }
         // Video speed control for hovered video
         if (hoveredVideo && (event.key === 'q' || event.key === 'Q' || event.key === 'e' || event.key === 'E')) {
@@ -302,7 +398,7 @@ function App() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedPhoto, photos, toggleImageInfo, hoveredVideo, fillScreen]);
+      }, [selectedPhoto, photos, toggleImageInfo, hoveredVideo, fillScreen, originalAspectRatio]);
 
   const loadFolders = async () => {
     try {
@@ -370,7 +466,7 @@ function App() {
             React.createElement('h1', { className: 'text-xl font-semibold text-gray-900' }, 'Viewarr')
           ),
           React.createElement('div', { className: 'flex items-center space-x-4' },
-            selectedFolder && 
+            selectedFolder &&
               React.createElement('div', { className: 'text-sm text-gray-500' },
                 'Viewing: ',
                 React.createElement('span', { className: 'font-medium text-gray-900' }, selectedFolder.name)
@@ -402,13 +498,29 @@ function App() {
                 })
               ),
               React.createElement('span', { className: 'text-sm font-bold text-green-800 w-12' }, showImageInfo ? 'ON' : 'OFF')
+            ),
+            React.createElement('div', { className: 'flex items-center space-x-2 bg-blue-200 p-3 rounded border-2 border-blue-500' },
+              React.createElement('span', { className: 'text-sm font-bold text-blue-800' }, 'ASPECT:'),
+              React.createElement('button', {
+                onClick: () => setOriginalAspectRatio(!originalAspectRatio),
+                className: `relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  originalAspectRatio ? 'bg-blue-600' : 'bg-gray-300'
+                }`
+              },
+                React.createElement('span', {
+                  className: `inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    originalAspectRatio ? 'translate-x-6' : 'translate-x-1'
+                  }`
+                })
+              ),
+              React.createElement('span', { className: 'text-sm font-bold text-blue-800 w-12' }, originalAspectRatio ? 'ORIG' : 'FIT')
             )
           )
         )
       )
     ),
     React.createElement('div', { className: 'flex h-screen' },
-      React.createElement('div', { 
+      React.createElement('div', {
         className: `transition-all duration-300 ease-in-out ${
           sidebarCollapsed ? 'w-16' : 'w-80'
         } bg-white shadow-sm border-r border-gray-200 flex-shrink-0`
@@ -442,15 +554,15 @@ function App() {
         )
       ),
       React.createElement('div', { className: 'flex-1 overflow-auto p-8' },
-        error ? 
+        error ?
           React.createElement('div', { className: 'mb-6 bg-red-50 border border-red-200 rounded-lg p-4' },
             React.createElement('p', { className: 'text-red-800' }, error),
             React.createElement('button', {
               onClick: loadFolders,
               className: 'mt-2 text-sm text-red-600 hover:text-red-800 underline'
             }, 'Try again')
-          ) : 
-          selectedFolder ? 
+          ) :
+          selectedFolder ?
             React.createElement('div', null,
               React.createElement('div', { className: 'mb-6' },
                 React.createElement('h2', { className: 'text-2xl font-bold text-gray-900 mb-2' }, selectedFolder.name),
@@ -458,27 +570,28 @@ function App() {
                   `${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}`
                 )
               ),
-              loading ? 
+              loading ?
                 React.createElement('div', { className: 'flex items-center justify-center py-12' },
                   React.createElement('div', { className: 'text-blue-600 mr-2' }, '⏳'),
                   React.createElement('span', { className: 'text-gray-600' }, 'Loading photos...')
-                ) : 
-                photos.length > 0 ? 
-                  React.createElement(PhotoGrid, { 
-                    photos: photos, 
+                ) :
+                photos.length > 0 ?
+                  React.createElement(PhotoGrid, {
+                    photos: photos,
                     onPhotoClick: handlePhotoClick,
                     imageSize: imageSize,
                     showImageInfo: showImageInfo,
                     setHoveredVideo: setHoveredVideo,
                     videoSpeed: videoSpeed,
                     showSpeedOverlay: showSpeedOverlay,
-                    overlayTarget: overlayTarget
-                  }) : 
+                    overlayTarget: overlayTarget,
+                    originalAspectRatio: originalAspectRatio
+                  }) :
                   React.createElement('div', { className: 'text-center py-12' },
                     React.createElement('div', { className: 'text-gray-300 text-4xl mb-3' }, '📸'),
                     React.createElement('p', { className: 'text-gray-500' }, 'No photos found in this folder')
                   )
-            ) : 
+            ) :
             React.createElement('div', { className: 'text-center py-12' },
               React.createElement('div', { className: 'text-gray-300 text-5xl mb-4' }, '📸'),
               React.createElement('h2', { className: 'text-xl font-semibold text-gray-900 mb-2' },
