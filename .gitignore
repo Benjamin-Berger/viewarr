@@ -56,3 +56,6 @@ venv.bak/
 # Photos directory (user content)
 photos/*
 !photos/.gitkeep 
+
+# Personal volume mounts (not committed to git)
+docker-compose.personal.yml 

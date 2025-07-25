@@ -8,15 +8,15 @@ const photoApi = {
     return response.data;
   },
   getSubfolders: async (folderPath) => {
-    const response = await axios.get(`${API_BASE_URL}/api/subfolders/${folderPath}`);
+    const response = await axios.get(`${API_BASE_URL}/api/subfolders/${encodeURIComponent(folderPath)}`);
     return response.data;
   },
   getPhotos: async (folderPath) => {
-    const response = await axios.get(`${API_BASE_URL}/api/photos/${folderPath}`);
+    const response = await axios.get(`${API_BASE_URL}/api/photos/${encodeURIComponent(folderPath)}`);
     return response.data;
   },
   getPhotoUrl: (photoPath) => {
-    return `${API_BASE_URL}/api/photo/${photoPath}`;
+    return `${API_BASE_URL}/api/photo/${encodeURIComponent(photoPath)}`;
   }
 };
 

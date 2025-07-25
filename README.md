@@ -40,17 +40,35 @@ A modern, responsive photo and video viewer application with a React frontend an
    # Copy your photos into the photos/ directory
    ```
 
-3. **Start the application**:
+3. **Optional: Add personal volume mounts** (for external drives):
+
+   Create a `docker-compose.personal.yml` file with your personal volume mounts:
+
+   ```yaml
+   version: "3.8"
+
+   services:
+     backend:
+       volumes:
+         - "/path/to/your/external/drive:/photos/external:ro"
+   ```
+
+   This file is already in `.gitignore` and won't be committed to git.
+
+4. **Start the application**:
 
    ```bash
-   # Development mode
+   # Development mode (with personal volumes)
+   docker-compose -f docker-compose.dev.yml -f docker-compose.personal.yml up --build
+
+   # Or use the script
    ./start-dev.sh
 
-   # Or production mode
+   # Production mode
    ./start-prod.sh
    ```
 
-4. **Open your browser**:
+5. **Open your browser**:
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000
 

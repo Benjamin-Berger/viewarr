@@ -14,9 +14,14 @@ mkdir -p photos
 echo "📁 Photos directory: $(pwd)/photos"
 echo "📸 Add your photos to the 'photos' directory to get started"
 
-# Start the development environment
-echo "🐳 Starting containers..."
-docker-compose -f docker-compose.dev.yml up --build
+# Check if personal volumes file exists
+if [ -f "docker-compose.personal.yml" ]; then
+    echo "🔗 Personal volumes detected, including them..."
+    docker-compose -f docker-compose.dev.yml -f docker-compose.personal.yml up --build
+else
+    echo "📝 No personal volumes found. Create docker-compose.personal.yml to add external drives."
+    docker-compose -f docker-compose.dev.yml up --build
+fi
 
 echo "✅ Photo Viewer is starting up!"
 echo "🌐 Frontend: http://localhost:3000"

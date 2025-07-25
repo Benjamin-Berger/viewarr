@@ -84,27 +84,44 @@ async def list_folders() -> List[Dict[str, Any]]:
 async def list_subfolders(folder_path: str) -> List[Dict[str, Any]]:
     """List subfolders within a specific folder."""
     try:
-        folder_full_path = Path(PHOTOS_DIR) / folder_path
+        # URL decode the folder path
+        from urllib.parse import unquote
+        decoded_folder_path = unquote(folder_path)
+        folder_full_path = Path(PHOTOS_DIR) / decoded_folder_path
         
         if not folder_full_path.exists() or not folder_full_path.is_dir():
             raise HTTPException(status_code=404, detail="Folder not found")
         
         subfolders = []
         for item in folder_full_path.iterdir():
-            if item.is_dir():
-                # Count files in subfolder
-                file_count = sum(1 for f in item.iterdir() 
-                               if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS)
-                
-                # Check if subfolder has its own subfolders
-                subfolder_count = sum(1 for f in item.iterdir() if f.is_dir())
-                
-                subfolders.append({
-                    "name": item.name,
-                    "path": str(item.relative_to(Path(PHOTOS_DIR))),
-                    "file_count": file_count,
-                    "has_subfolders": subfolder_count > 0
-                })
+            try:
+                if item.is_dir():
+                    # Count files in subfolder (with error handling)
+                    file_count = 0
+                    subfolder_count = 0
+                    try:
+                        for f in item.iterdir():
+                            try:
+                                if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS:
+                                    file_count += 1
+                                elif f.is_dir():
+                                    subfolder_count += 1
+                            except (OSError, PermissionError):
+                                # Skip files we can't access
+                                continue
+                    except (OSError, PermissionError):
+                        # Skip directories we can't access
+                        continue
+                    
+                    subfolders.append({
+                        "name": item.name,
+                        "path": str(item.relative_to(Path(PHOTOS_DIR))),
+                        "file_count": file_count,
+                        "has_subfolders": subfolder_count > 0
+                    })
+            except (OSError, PermissionError):
+                # Skip items we can't access
+                continue
         
         return sorted(subfolders, key=lambda x: x["name"].lower())
     except HTTPException:
@@ -116,28 +133,41 @@ async def list_subfolders(folder_path: str) -> List[Dict[str, Any]]:
 async def get_photos(folder_path: str) -> Dict[str, Any]:
     """Get all photos in a specific folder."""
     try:
-        folder_full_path = Path(PHOTOS_DIR) / folder_path
-        
-        if not folder_full_path.exists() or not folder_full_path.is_dir():
+        # URL decode the folder path
+        from urllib.parse import unquote
+        decoded_folder_path = unquote(folder_path)
+        folder_full_path = Path(PHOTOS_DIR) / decoded_folder_path
+        # Try to access the directory directly, even if exists() returns False
+        try:
+            # Try to list the directory contents
+            list(folder_full_path.iterdir())
+        except (OSError, PermissionError, FileNotFoundError):
             raise HTTPException(status_code=404, detail="Folder not found")
         
         photos = []
         for file_path in folder_full_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in SUPPORTED_EXTENSIONS:
-                file_type = get_file_type(file_path)
-                if file_type != "unknown":
-                    photos.append({
-                        "name": file_path.name,
-                        "path": str(file_path.relative_to(Path(PHOTOS_DIR))),
-                        "type": file_type,
-                        "size": file_path.stat().st_size,
-                        "modified": file_path.stat().st_mtime
-                    })
+            try:
+                if file_path.is_file() and file_path.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    try:
+                        file_type = get_file_type(file_path)
+                        if file_type != "unknown":
+                            photos.append({
+                                "name": file_path.name,
+                                "path": str(file_path.relative_to(Path(PHOTOS_DIR))),
+                                "type": file_type,
+                                "size": file_path.stat().st_size,
+                                "modified": file_path.stat().st_mtime
+                            })
+                    except (OSError, PermissionError):
+                        # Skip files we can't access
+                        continue
+            except (OSError, PermissionError):
+                # Skip items we can't access
+                continue
         
         return {
             "folder": folder_path,
-            "photos": sorted(photos, key=lambda x: x["name"].lower()),
-            "total_count": len(photos)
+            "photos": sorted(photos, key=lambda x: x["name"].lower())
         }
     except HTTPException:
         raise
@@ -148,14 +178,24 @@ async def get_photos(folder_path: str) -> Dict[str, Any]:
 async def serve_photo(file_path: str, request: Request):
     """Serve a specific photo or video file, with HTTP Range support for videos."""
     try:
-        full_path = Path(PHOTOS_DIR) / file_path
+        # URL decode the file path
+        from urllib.parse import unquote
+        decoded_file_path = unquote(file_path)
+        full_path = Path(PHOTOS_DIR) / decoded_file_path
         if not full_path.exists() or not full_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         # Security check: ensure file is within photos directory
         try:
+            # Try the resolve method first
             full_path.resolve().relative_to(Path(PHOTOS_DIR).resolve())
         except ValueError:
-            raise HTTPException(status_code=403, detail="Access denied")
+            # If that fails, try a simpler check for mounted volumes
+            try:
+                # Check if the file path starts with the photos directory
+                if not str(full_path).startswith(str(Path(PHOTOS_DIR))):
+                    raise HTTPException(status_code=403, detail="Access denied")
+            except Exception:
+                raise HTTPException(status_code=403, detail="Access denied")
         # Determine content type
         content_type, _ = mimetypes.guess_type(str(full_path))
         if not content_type:
