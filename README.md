@@ -7,6 +7,8 @@ A modern, responsive photo and video viewer application with a React frontend an
 - 📁 **Folder Navigation**: Browse through organized photo folders
 - 🖼️ **Grid View**: View photos in a responsive grid layout
 - 🎥 **Video Support**: View both images and videos
+- ⚡ **Lazy Loading**: Videos are only loaded when hovered or clicked, improving performance with large video collections
+- 🎬 **Video Thumbnails**: Automatic thumbnail generation for video previews with proper aspect ratio support
 - 🔍 **Full-Screen Mode**: Click any image to view it full-screen
 - ⌨️ **Keyboard Navigation**:
   - Arrow keys to navigate between images
@@ -116,6 +118,74 @@ viewarr/
 - `GET /api/folders` - List all folders
 - `GET /api/photos/{folder_path}` - Get photos in a specific folder
 - `GET /api/photo/{file_path}` - Serve a specific photo file
+
+## Lazy Loading Implementation
+
+The application implements intelligent lazy loading for video files to improve performance when browsing folders with many videos:
+
+### How it Works
+
+1. **Initial State**: Video elements are created without a `src` attribute, preventing automatic loading
+2. **Hover Detection**: Videos are loaded only when the user hovers over them for 200ms (prevents accidental loads)
+3. **Click Loading**: Videos are immediately loaded when clicked for full-screen viewing
+4. **HTTP Range Support**: The backend supports partial content requests for efficient video streaming
+5. **Memory Management**: Proper cleanup of timeouts and event listeners
+
+### Performance Benefits
+
+- **Faster Initial Load**: Pages load quickly even with hundreds of video files
+- **Reduced Bandwidth**: Only requested videos are downloaded
+- **Better User Experience**: Smooth browsing without waiting for all videos to load
+- **Efficient Streaming**: Videos use HTTP Range requests for optimal playback
+
+### Technical Details
+
+- Uses React's `useRef` and `useState` for state management
+- Implements debounced hover detection (200ms delay)
+- Supports both grid and masonry layouts
+- Maintains compatibility with existing full-screen functionality
+
+## Video Thumbnail System
+
+The application includes an advanced thumbnail generation system for video files:
+
+### Features
+
+- **Automatic Generation**: Thumbnails are generated on-demand using FFmpeg
+- **Background Processing**: Thumbnail generation runs asynchronously without blocking the UI
+- **Smart Caching**: Generated thumbnails are cached in memory for instant retrieval
+- **Aspect Ratio Support**: Thumbnails respect original video aspect ratios in Pinterest mode
+- **Fallback System**: Tries 5-second mark first, falls back to 1-second for short videos
+- **Low Resolution**: 150px width thumbnails for fast generation and loading
+
+### API Endpoints
+
+- `GET /api/thumbnail/{file_path}` - Generate thumbnail for a video file
+- `GET /api/thumbnail-status/{file_path}` - Check thumbnail generation status
+- `POST /api/thumbnail-cache/clear` - Clear thumbnail cache
+- `GET /api/thumbnail-cache/status` - Get cache status and statistics
+
+### Performance Optimizations
+
+- **Concurrent Limiting**: Maximum 4 simultaneous thumbnail generations
+- **Cache Invalidation**: Based on file modification time
+- **Memory Management**: Automatic cleanup of processing states
+- **Polling System**: Frontend polls for completion without blocking
+
+### Testing
+
+Use the provided test scripts to verify thumbnail functionality:
+
+```javascript
+// Test thumbnail aspect ratio
+testThumbnailAspectRatio();
+
+// Test thumbnail generation
+testThumbnailGenerationAndAspectRatio();
+
+// Monitor cache in real-time
+monitorCache();
+```
 
 ## Technologies Used
 

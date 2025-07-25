@@ -33,6 +33,277 @@ const formatDate = (timestamp) => {
   return new Date(timestamp * 1000).toLocaleDateString();
 };
 
+// Performance monitoring for lazy loading
+const lazyLoadingStats = {
+  totalVideos: 0,
+  loadedVideos: 0,
+  hoverLoads: 0,
+  clickLoads: 0,
+  startTime: Date.now()
+};
+
+const logLazyLoadingStats = () => {
+  const elapsed = Date.now() - lazyLoadingStats.startTime;
+  console.log('📊 Lazy Loading Performance Stats:');
+  console.log(`- Total videos: ${lazyLoadingStats.totalVideos}`);
+  console.log(`- Loaded videos: ${lazyLoadingStats.loadedVideos}`);
+  console.log(`- Hover loads: ${lazyLoadingStats.hoverLoads}`);
+  console.log(`- Click loads: ${lazyLoadingStats.clickLoads}`);
+  console.log(`- Load rate: ${((lazyLoadingStats.loadedVideos / lazyLoadingStats.totalVideos) * 100).toFixed(1)}%`);
+  console.log(`- Time elapsed: ${(elapsed / 1000).toFixed(1)}s`);
+};
+
+// Make stats available globally for debugging
+window.getLazyLoadingStats = () => {
+  const elapsed = Date.now() - lazyLoadingStats.startTime;
+  return {
+    ...lazyLoadingStats,
+    elapsedSeconds: (elapsed / 1000).toFixed(1),
+    loadRate: lazyLoadingStats.totalVideos > 0 ? ((lazyLoadingStats.loadedVideos / lazyLoadingStats.totalVideos) * 100).toFixed(1) : '0'
+  };
+};
+
+window.resetLazyLoadingStats = () => {
+  lazyLoadingStats.totalVideos = 0;
+  lazyLoadingStats.loadedVideos = 0;
+  lazyLoadingStats.hoverLoads = 0;
+  lazyLoadingStats.clickLoads = 0;
+  lazyLoadingStats.startTime = Date.now();
+  console.log('🔄 Lazy loading stats reset');
+};
+
+// Video Thumbnail Component with Lazy Loading
+const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVideo, showSpeedOverlay, videoSpeed, overlayTarget, originalAspectRatio, onPhotoClick }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [thumbnail, setThumbnail] = useState(null);
+  const [thumbnailStatus, setThumbnailStatus] = useState('not_started');
+  const videoRef = React.useRef(null);
+  const hoverTimeoutRef = React.useRef(null);
+  const thumbnailPollingRef = React.useRef(null);
+
+  // Track this video in stats
+  React.useEffect(() => {
+    lazyLoadingStats.totalVideos++;
+  }, []);
+
+  // Load thumbnail asynchronously
+  React.useEffect(() => {
+    const loadThumbnail = async () => {
+      try {
+        // First check if thumbnail is ready
+        const statusResponse = await fetch(`${API_BASE_URL}/api/thumbnail-status/${encodeURIComponent(photo.path)}`);
+        if (statusResponse.ok) {
+          const statusData = await statusResponse.json();
+          
+          if (statusData.status === 'ready') {
+            setThumbnail(statusData.thumbnail);
+            setThumbnailStatus('ready');
+            return;
+          } else if (statusData.status === 'processing') {
+            setThumbnailStatus('processing');
+            // Start polling for completion
+            startThumbnailPolling();
+            return;
+          }
+        }
+        
+        // If not started, initiate thumbnail generation
+        const response = await fetch(`${API_BASE_URL}/api/thumbnail/${encodeURIComponent(photo.path)}`);
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (data.thumbnail) {
+            // Immediate response (cached)
+            setThumbnail(data.thumbnail);
+            setThumbnailStatus('ready');
+          } else if (data.status === 'processing') {
+            // Started processing, begin polling
+            setThumbnailStatus('processing');
+            startThumbnailPolling();
+          }
+        }
+      } catch (error) {
+        console.log('Could not load thumbnail for video:', photo.path);
+        setThumbnailStatus('failed');
+      }
+    };
+    
+    loadThumbnail();
+    
+    // Cleanup polling on unmount
+    return () => {
+      if (thumbnailPollingRef.current) {
+        clearTimeout(thumbnailPollingRef.current);
+      }
+    };
+  }, [photo.path]);
+
+  const startThumbnailPolling = () => {
+    const pollThumbnail = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/thumbnail-status/${encodeURIComponent(photo.path)}`);
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (data.status === 'ready') {
+            setThumbnail(data.thumbnail);
+            setThumbnailStatus('ready');
+            return; // Stop polling
+          } else if (data.status === 'processing') {
+            // Continue polling
+            thumbnailPollingRef.current = setTimeout(pollThumbnail, 1000); // Poll every second
+          }
+        }
+      } catch (error) {
+        console.log('Error polling thumbnail status:', error);
+        setThumbnailStatus('failed');
+      }
+    };
+    
+    // Start polling after 1 second
+    thumbnailPollingRef.current = setTimeout(pollThumbnail, 1000);
+  };
+
+  // Cleanup effect
+  React.useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+      if (thumbnailPollingRef.current) {
+        clearTimeout(thumbnailPollingRef.current);
+      }
+    };
+  }, []);
+
+  const handleMouseEnter = (e) => {
+    setIsHovered(true);
+    
+    // Clear any existing timeout
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    
+    // Add a small delay to prevent loading on quick hovers
+    hoverTimeoutRef.current = setTimeout(() => {
+      if (videoRef.current && !isLoaded && !isLoading) {
+        setIsLoading(true);
+        // Load the video source only when hovered for a moment
+        videoRef.current.src = photoApi.getPhotoUrl(photo.path);
+        setIsLoaded(true);
+        setIsLoading(false);
+        lazyLoadingStats.loadedVideos++;
+        lazyLoadingStats.hoverLoads++;
+        logLazyLoadingStats();
+      }
+      if (videoRef.current && isLoaded) {
+        videoRef.current.play().catch(() => {});
+        setHoveredVideo(videoRef.current);
+      }
+    }, 200); // 200ms delay
+  };
+
+  const handleMouseLeave = (e) => {
+    setIsHovered(false);
+    setIsLoading(false);
+    
+    // Clear the timeout
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    
+    if (videoRef.current && isLoaded) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+      setHoveredVideo(null);
+    }
+  };
+
+  const handleClick = () => {
+    // Clear any pending hover timeout
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    
+    // Ensure video is loaded when clicked
+    if (videoRef.current && !isLoaded) {
+      setIsLoading(true);
+      videoRef.current.src = photoApi.getPhotoUrl(photo.path);
+      setIsLoaded(true);
+      setIsLoading(false);
+      lazyLoadingStats.loadedVideos++;
+      lazyLoadingStats.clickLoads++;
+      logLazyLoadingStats();
+    }
+    onPhotoClick?.(photo);
+  };
+
+  // Determine video style based on layout mode
+  const videoStyle = originalAspectRatio ? 
+    { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' } :
+    { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' };
+
+  // Thumbnail style - for original aspect ratio, preserve original aspect ratio without distortion
+  const thumbnailStyle = originalAspectRatio ? 
+    { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' } :
+    { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' };
+
+  return React.createElement('div', { className: 'relative' },
+    // Show thumbnail when video is not loaded
+    !isLoaded && thumbnail && thumbnailStatus === 'ready' ? 
+      React.createElement('img', {
+        src: thumbnail,
+        style: thumbnailStyle,
+        className: 'w-full h-auto',
+        onMouseEnter: handleMouseEnter,
+        onMouseLeave: handleMouseLeave,
+        onClick: handleClick
+      }) : null,
+    // Video element (always rendered, but only visible when loaded)
+    React.createElement('video', {
+      ref: videoRef,
+      style: { ...videoStyle, display: isLoaded ? 'block' : 'none' },
+      preload: 'none', // Don't preload anything
+      muted: isMuted,
+      loop: true,
+      onMouseEnter: handleMouseEnter,
+      onMouseLeave: handleMouseLeave,
+      onClick: handleClick
+    }),
+    // Thumbnail processing indicator
+    !isLoaded && thumbnailStatus === 'processing' && React.createElement('div', {
+      className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none'
+    },
+      React.createElement('div', { className: 'text-white text-xs' }, 'Generating thumbnail...')
+    ),
+    // Loading indicator
+    isLoading && React.createElement('div', {
+      className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 pointer-events-none'
+    },
+      React.createElement('div', { className: 'text-white text-sm' }, 'Loading...')
+    ),
+    // Speed overlay for hovered video
+    showSpeedOverlay && overlayTarget === 'hover' && React.createElement('div', {
+      className: 'absolute top-2 left-2 z-20 bg-black bg-opacity-70 text-white px-3 py-1 rounded text-base font-bold pointer-events-none',
+      style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
+    }, `${videoSpeed.toFixed(2)}x`),
+    // Play button overlay (shows when not hovered or when video not loaded)
+    React.createElement('div', {
+      className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none',
+      style: { 
+        opacity: (hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path)) || (isHovered && isLoaded) ? 0 : 1, 
+        transition: 'opacity 0.2s' 
+      }
+    },
+      React.createElement('div', { className: 'text-white text-4xl' }, '▶')
+    )
+  );
+};
+
 const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredVideo, hoveredVideo, videoSpeed, showSpeedOverlay, overlayTarget, originalAspectRatio, isMuted }) => {
   // Row-first masonry logic
   if (originalAspectRatio) {
@@ -47,7 +318,7 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
     return React.createElement('div', {
       style: {
         display: 'flex',
-        gap: '0.5rem',
+        gap: '1rem',
         alignItems: 'flex-start',
         width: '100%'
       }
@@ -55,13 +326,16 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
       columns.map((col, colIdx) =>
         React.createElement('div', {
           key: colIdx,
-          style: { flex: 1, minWidth: 0 }
+          style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }
         },
           col.map((photo) =>
             React.createElement('div', {
               key: photo.path,
               className: 'photo-card cursor-pointer',
-              style: { marginBottom: '0.5rem' },
+              style: { 
+                marginBottom: '1rem',
+                width: '100%'
+              },
               onClick: () => onPhotoClick?.(photo)
             },
               React.createElement('div', { className: 'relative' },
@@ -72,42 +346,33 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
                     style: { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' },
                     loading: 'lazy'
                   }) :
-                  React.createElement('div', { className: 'relative' },
-                    React.createElement('video', {
-                      src: photoApi.getPhotoUrl(photo.path),
-                      style: { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' },
-                      preload: 'metadata',
-                      muted: isMuted,
-                      loop: true,
-                      onMouseEnter: (e) => {
-                        e.target.play().catch(() => {});
-                        setHoveredVideo(e.target);
-                      },
-                      onMouseLeave: (e) => {
-                        e.target.pause();
-                        e.target.currentTime = 0;
-                        setHoveredVideo(null);
-                      }
-                    }),
-                    // Speed overlay for hovered video
-                    showSpeedOverlay && overlayTarget === 'hover' && React.createElement('div', {
-                      className: 'absolute top-2 left-2 z-20 bg-black bg-opacity-70 text-white px-3 py-1 rounded text-base font-bold pointer-events-none',
-                      style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
-                    }, `${videoSpeed.toFixed(2)}x`),
-                    React.createElement('div', {
-                      className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none',
-                      style: { opacity: hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path) ? 0 : 1, transition: 'opacity 0.2s' }
-                    },
-                      React.createElement('div', { className: 'text-white text-4xl' }, '▶')
-                    )
-                  ),
+                  React.createElement(VideoThumbnail, {
+                    photo: photo,
+                    imageSize: imageSize,
+                    isMuted: isMuted,
+                    setHoveredVideo: setHoveredVideo,
+                    hoveredVideo: hoveredVideo,
+                    showSpeedOverlay: showSpeedOverlay,
+                    videoSpeed: videoSpeed,
+                    overlayTarget: overlayTarget,
+                    originalAspectRatio: originalAspectRatio,
+                    onPhotoClick: onPhotoClick
+                  }),
                 React.createElement('div', { className: 'absolute top-2 right-2' },
                   photo.type === 'image' ?
                     React.createElement('div', { className: 'text-white drop-shadow text-sm' }, '📷') :
                     React.createElement('div', { className: 'text-white drop-shadow text-sm' }, '▶')
                 )
               ),
-              showImageInfo && React.createElement('div', { className: 'p-3' },
+              showImageInfo && React.createElement('div', { 
+                className: 'p-3',
+                style: { 
+                  position: 'relative',
+                  zIndex: 10,
+                  backgroundColor: 'white',
+                  borderTop: '1px solid #e5e7eb'
+                }
+              },
                 React.createElement('h3', {
                   className: 'text-sm font-medium text-gray-900 truncate',
                   title: photo.name
@@ -146,35 +411,18 @@ const PhotoGrid = ({ photos, onPhotoClick, imageSize, showImageInfo, setHoveredV
               style: { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' },
               loading: 'lazy'
             }) :
-            React.createElement('div', { className: 'relative' },
-              React.createElement('video', {
-                src: photoApi.getPhotoUrl(photo.path),
-                style: { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' },
-                preload: 'metadata',
-                muted: isMuted,
-                loop: true,
-                onMouseEnter: (e) => {
-                  e.target.play().catch(() => {});
-                  setHoveredVideo(e.target);
-                },
-                onMouseLeave: (e) => {
-                  e.target.pause();
-                  e.target.currentTime = 0;
-                  setHoveredVideo(null);
-                }
-              }),
-              // Speed overlay for hovered video
-              showSpeedOverlay && overlayTarget === 'hover' && React.createElement('div', {
-                className: 'absolute top-2 left-2 z-20 bg-black bg-opacity-70 text-white px-3 py-1 rounded text-base font-bold pointer-events-none',
-                style: { transition: 'opacity 0.3s', opacity: showSpeedOverlay ? 1 : 0 }
-              }, `${videoSpeed.toFixed(2)}x`),
-              React.createElement('div', {
-                className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none',
-                style: { opacity: hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path) ? 0 : 1, transition: 'opacity 0.2s' }
-              },
-                React.createElement('div', { className: 'text-white text-4xl' }, '▶')
-              )
-            ),
+            React.createElement(VideoThumbnail, {
+              photo: photo,
+              imageSize: imageSize,
+              isMuted: isMuted,
+              setHoveredVideo: setHoveredVideo,
+              hoveredVideo: hoveredVideo,
+              showSpeedOverlay: showSpeedOverlay,
+              videoSpeed: videoSpeed,
+              overlayTarget: overlayTarget,
+              originalAspectRatio: originalAspectRatio,
+              onPhotoClick: onPhotoClick
+            }),
           React.createElement('div', { className: 'absolute top-2 right-2' },
             photo.type === 'image' ?
               React.createElement('div', { className: 'text-white drop-shadow text-sm' }, '📷') :
