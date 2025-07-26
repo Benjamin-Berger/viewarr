@@ -174,7 +174,7 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
             setThumbnail(data.thumbnail);
             setThumbnailStatus('ready');
           } else if (data.status === 'processing' || data.status === 'queued') {
-            // Started processing or queued, begin polling
+            // Started processing, begin polling
             setThumbnailStatus('processing');
             startThumbnailPolling();
           }
@@ -234,6 +234,53 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     thumbnailPollingRef.current = setTimeout(pollThumbnail, 1000);
   };
 
+  // Handle AVI video conversion
+  const handleAviVideo = async () => {
+    try {
+      // Check if video needs conversion (AVI files)
+      const isAvi = photo.path.toLowerCase().endsWith('.avi');
+      if (!isAvi) return;
+      
+      // For AVI files, immediately set the source to the conversion endpoint
+      // which will stream the conversion on-the-fly
+      const convertedUrl = `${API_BASE_URL}/api/convert/${encodeURIComponent(photo.path)}`;
+      if (videoRef.current) {
+        videoRef.current.src = convertedUrl;
+        console.log('Started streaming conversion for AVI video:', photo.path);
+      }
+    } catch (error) {
+      console.log('Error handling AVI video:', error);
+    }
+  };
+
+  const startConversionPolling = () => {
+    const pollConversion = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/conversion-status/${encodeURIComponent(photo.path)}`);
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (data.status === 'ready') {
+            // Use converted video
+            const convertedUrl = `${API_BASE_URL}/api/convert/${encodeURIComponent(photo.path)}`;
+            if (videoRef.current) {
+              videoRef.current.src = convertedUrl;
+            }
+            return; // Stop polling
+          } else if (data.status === 'processing') {
+            // Continue polling
+            setTimeout(pollConversion, 2000); // Poll every 2 seconds
+          }
+        }
+      } catch (error) {
+        console.log('Error polling conversion status:', error);
+      }
+    };
+    
+    // Start polling after 2 seconds
+    setTimeout(pollConversion, 2000);
+  };
+
   // Cleanup effect
   React.useEffect(() => {
     return () => {
@@ -260,8 +307,16 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
       if (videoRef.current && !isLoaded && !isLoading) {
         console.log('Loading video on hover:', photo.path);
         setIsLoading(true);
-        // Load the video source only when hovered for a moment
-        videoRef.current.src = photoApi.getPhotoUrl(photo.path);
+        
+        // Handle AVI conversion if needed
+        const isAvi = photo.path.toLowerCase().endsWith('.avi');
+        if (isAvi) {
+          handleAviVideo();
+        } else {
+          // Load the video source only when hovered for a moment
+          videoRef.current.src = photoApi.getPhotoUrl(photo.path);
+        }
+        
         setIsLoaded(true);
         // Don't set isVideoReady yet - wait for canplay event
         setIsLoading(false);
@@ -306,7 +361,15 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     // Ensure video is loaded when clicked
     if (videoRef.current && !isLoaded) {
       setIsLoading(true);
-      videoRef.current.src = photoApi.getPhotoUrl(photo.path);
+      
+      // Handle AVI conversion if needed
+      const isAvi = photo.path.toLowerCase().endsWith('.avi');
+      if (isAvi) {
+        handleAviVideo();
+      } else {
+        videoRef.current.src = photoApi.getPhotoUrl(photo.path);
+      }
+      
       setIsLoaded(true);
       // Don't set isVideoReady yet - wait for canplay event
       setIsLoading(false);
@@ -991,6 +1054,17 @@ function App() {
     try {
       setLoading(true);
       setError(null);
+      
+      // Set the current folder for priority thumbnail generation
+      try {
+        await fetch(`${API_BASE_URL}/api/set-current-folder/${encodeURIComponent(folderPath)}`, {
+          method: 'POST'
+        });
+        console.log('Set current folder for priority thumbnails:', folderPath);
+      } catch (err) {
+        console.error('Failed to set current folder:', err);
+      }
+      
       const photoData = await photoApi.getPhotos(folderPath);
       setPhotos(photoData.photos);
     } catch (err) {
@@ -1007,6 +1081,18 @@ function App() {
       setError(null);
       
       console.log('Loading photos from multiple folders:', folderPaths);
+      
+      // Set the current folder for priority thumbnail generation (use the first folder)
+      if (folderPaths.length > 0) {
+        try {
+          await fetch(`${API_BASE_URL}/api/set-current-folder/${encodeURIComponent(folderPaths[0])}`, {
+            method: 'POST'
+          });
+          console.log('Set current folder for priority thumbnails:', folderPaths[0]);
+        } catch (err) {
+          console.error('Failed to set current folder:', err);
+        }
+      }
       
       // Load photos from all selected folders
       const allPhotos = [];
