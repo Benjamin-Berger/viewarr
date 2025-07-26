@@ -1158,9 +1158,9 @@ function App() {
       React.createElement('div', {
         className: `transition-all duration-300 ease-in-out ${
           sidebarCollapsed ? 'w-16' : 'w-80'
-        } bg-white shadow-sm border-r border-gray-200 flex-shrink-0`
+        } bg-white shadow-sm border-r border-gray-200 flex-shrink-0 flex flex-col`
       },
-        React.createElement('div', { className: 'flex items-center justify-between p-4 border-b border-gray-200' },
+        React.createElement('div', { className: 'flex items-center justify-between p-4 border-b border-gray-200 flex-shrink-0' },
           !sidebarCollapsed && React.createElement('h2', { className: 'text-lg font-semibold text-gray-900' }, 'Folders'),
           React.createElement('button', {
             onClick: toggleSidebar,
@@ -1168,19 +1168,21 @@ function App() {
             title: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'
           }, sidebarCollapsed ? '▶' : '◀')
         ),
-        !sidebarCollapsed && React.createElement(FolderList, {
-          folders: folders,
-          selectedFolder: selectedFolder?.path,
-          onFolderSelect: handleFolderSelect,
-          expandedFolders: expandedFolders,
-          setExpandedFolders: setExpandedFolders,
-          subfolders: subfolders,
-          setSubfolders: setSubfolders,
-          selectedFolders: selectedFolders,
-          setSelectedFolders: setSelectedFolders,
-          loadPhotosFromMultipleFolders: loadPhotosFromMultipleFolders
-        }),
-        sidebarCollapsed && React.createElement('div', { className: 'p-2' },
+        !sidebarCollapsed && React.createElement('div', { className: 'flex-1 overflow-y-auto' },
+          React.createElement(FolderList, {
+            folders: folders,
+            selectedFolder: selectedFolder?.path,
+            onFolderSelect: handleFolderSelect,
+            expandedFolders: expandedFolders,
+            setExpandedFolders: setExpandedFolders,
+            subfolders: subfolders,
+            setSubfolders: setSubfolders,
+            selectedFolders: selectedFolders,
+            setSelectedFolders: setSelectedFolders,
+            loadPhotosFromMultipleFolders: loadPhotosFromMultipleFolders
+          })
+        ),
+        sidebarCollapsed && React.createElement('div', { className: 'flex-1 overflow-y-auto p-2' },
           folders.map((folder) =>
             React.createElement('div', {
               key: folder.path,
@@ -1192,9 +1194,9 @@ function App() {
               onClick: () => handleFolderSelect(folder),
               title: folder.name
             }, folder.has_subfolders ? '📂' : '📁')
+            )
           )
-        )
-      ),
+        ),
       React.createElement('div', { className: 'flex-1 overflow-auto p-8' },
         error ?
           React.createElement('div', { className: 'mb-6 bg-red-50 border border-red-200 rounded-lg p-4' },
