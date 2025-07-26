@@ -78,8 +78,10 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
   const [isVideoReady, setIsVideoReady] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasPlayed, setHasPlayed] = useState(false);
   const [thumbnail, setThumbnail] = useState(null);
   const [thumbnailStatus, setThumbnailStatus] = useState('not_started');
+  const [videoAspectRatio, setVideoAspectRatio] = useState(null);
   const videoRef = React.useRef(null);
   const hoverTimeoutRef = React.useRef(null);
   const thumbnailPollingRef = React.useRef(null);
@@ -94,16 +96,52 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     const video = videoRef.current;
     if (video) {
       const handleCanPlay = () => {
+        console.log('Video canplay event fired for:', photo.path);
         setIsVideoReady(true);
       };
       
+      const handleLoadedMetadata = () => {
+        console.log('Video loadedmetadata event fired for:', photo.path);
+        if (video.videoWidth && video.videoHeight) {
+          const aspectRatio = video.videoWidth / video.videoHeight;
+          console.log('Video aspect ratio:', aspectRatio, 'for:', photo.path);
+          setVideoAspectRatio(aspectRatio);
+        }
+      };
+      
       video.addEventListener('canplay', handleCanPlay);
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
       
       return () => {
         video.removeEventListener('canplay', handleCanPlay);
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       };
     }
   }, [isLoaded]);
+
+  // Auto-play video when it becomes ready and we're hovering
+  React.useEffect(() => {
+    if (isVideoReady && isHovered && videoRef.current) {
+      console.log('Video became ready while hovering, attempting to play:', photo.path);
+      videoRef.current.play().catch((error) => {
+        console.log('Error auto-playing video:', error);
+      });
+      setHoveredVideo(videoRef.current);
+      setHasPlayed(true);
+    }
+  }, [isVideoReady, isHovered, photo.path]);
+
+  // Fallback: if video is loaded but not ready after 1 second, show it anyway
+  React.useEffect(() => {
+    if (isLoaded && !isVideoReady) {
+      const timeout = setTimeout(() => {
+        console.log('Using timeout fallback for video:', photo.path);
+        setIsVideoReady(true);
+      }, 1000);
+      
+      return () => clearTimeout(timeout);
+    }
+  }, [isLoaded, isVideoReady, photo.path]);
 
   // Load thumbnail asynchronously
   React.useEffect(() => {
@@ -157,6 +195,19 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     };
   }, [photo.path]);
 
+  // Calculate aspect ratio from thumbnail when it loads
+  React.useEffect(() => {
+    if (thumbnail && thumbnailStatus === 'ready') {
+      const img = new Image();
+      img.onload = () => {
+        const aspectRatio = img.naturalWidth / img.naturalHeight;
+        console.log('Calculated aspect ratio from thumbnail:', aspectRatio, 'for:', photo.path);
+        setVideoAspectRatio(aspectRatio);
+      };
+      img.src = thumbnail;
+    }
+  }, [thumbnail, thumbnailStatus, photo.path]);
+
   const startThumbnailPolling = () => {
     const pollThumbnail = async () => {
       try {
@@ -196,6 +247,7 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
   }, []);
 
   const handleMouseEnter = (e) => {
+    console.log('Mouse enter for video:', photo.path, 'isLoaded:', isLoaded, 'isVideoReady:', isVideoReady);
     setIsHovered(true);
     
     // Clear any existing timeout
@@ -206,6 +258,7 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     // Add a small delay to prevent loading on quick hovers
     hoverTimeoutRef.current = setTimeout(() => {
       if (videoRef.current && !isLoaded && !isLoading) {
+        console.log('Loading video on hover:', photo.path);
         setIsLoading(true);
         // Load the video source only when hovered for a moment
         videoRef.current.src = photoApi.getPhotoUrl(photo.path);
@@ -217,7 +270,10 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
         logLazyLoadingStats();
       }
       if (videoRef.current && isLoaded) {
-        videoRef.current.play().catch(() => {});
+        console.log('Playing video on hover:', photo.path, 'isVideoReady:', isVideoReady);
+        videoRef.current.play().catch((error) => {
+          console.log('Error playing video:', error);
+        });
         setHoveredVideo(videoRef.current);
       }
     }, 200); // 200ms delay
@@ -271,12 +327,52 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     { width: '100%', height: 'auto', maxWidth: '100%', transition: 'transform 0.2s' } :
     { width: '100%', height: `${imageSize}px`, objectFit: 'cover', transition: 'transform 0.2s' };
 
-  return React.createElement('div', { className: 'relative' },
-    // Show thumbnail when video is not ready to play
-    !isVideoReady && thumbnail && thumbnailStatus === 'ready' ? 
+  // Base video element style that maintains grid layout
+  const baseVideoStyle = originalAspectRatio ? 
+    { width: '100%', height: 'auto', maxWidth: '100%' } :
+    { width: '100%', height: `${imageSize}px`, objectFit: 'cover' };
+
+  return React.createElement('div', { 
+    className: 'relative',
+    style: originalAspectRatio ? {
+      width: '100%',
+      aspectRatio: videoAspectRatio ? videoAspectRatio.toString() : '16/9', // Use calculated aspect ratio or default
+      backgroundColor: 'transparent',
+      border: '1px solid transparent' // Invisible border to maintain shape
+    } : {
+      width: '100%',
+      height: `${imageSize}px`
+    }
+  },
+    // Always show thumbnail when available, but fade it out when video is ready
+    thumbnail && thumbnailStatus === 'ready' ? 
       React.createElement('img', {
         src: thumbnail,
-        style: thumbnailStyle,
+        style: {
+          ...thumbnailStyle,
+          ...(originalAspectRatio && {
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            opacity: (isVideoReady && (isHovered || hasPlayed)) ? 0 : 1,
+            transition: 'opacity 1s ease-in-out',
+            zIndex: 1
+          }),
+          ...(!originalAspectRatio && {
+            opacity: (isVideoReady && (isHovered || hasPlayed)) ? 0 : 1,
+            transition: 'opacity 1s ease-in-out',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            zIndex: 1,
+            width: '100%',
+            height: `${imageSize}px`,
+            objectFit: 'cover'
+          })
+        },
         className: 'w-full h-auto',
         onMouseEnter: handleMouseEnter,
         onMouseLeave: handleMouseLeave,
@@ -285,7 +381,28 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
     // Video element (always rendered, but only visible when ready to play)
     React.createElement('video', {
       ref: videoRef,
-      style: { ...videoStyle, display: isVideoReady ? 'block' : 'none' },
+      style: { 
+        ...baseVideoStyle, 
+        opacity: (isVideoReady && (isHovered || hasPlayed)) ? 1 : 0,
+        pointerEvents: isVideoReady ? 'auto' : 'none',
+        position: originalAspectRatio ? 'absolute' : (isVideoReady ? 'relative' : 'absolute'),
+        top: originalAspectRatio ? 0 : (isVideoReady ? 'auto' : 0),
+        left: originalAspectRatio ? 0 : (isVideoReady ? 'auto' : 0),
+        ...(originalAspectRatio && {
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover'
+        }),
+        ...(!originalAspectRatio && {
+          width: '100%',
+          height: `${imageSize}px`,
+          objectFit: 'cover'
+        }),
+        overflow: 'hidden',
+        transition: 'opacity 1s ease-in-out',
+        zIndex: originalAspectRatio ? (isVideoReady ? 2 : 1) : 1,
+        backgroundColor: '#000000' // Black background to prevent white flash
+      },
       preload: 'none', // Don't preload anything
       muted: isMuted,
       loop: true,
@@ -315,11 +432,17 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
       className: 'absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 pointer-events-none',
       style: { 
         opacity: (hoveredVideo && hoveredVideo.src === photoApi.getPhotoUrl(photo.path)) || (isHovered && isVideoReady) ? 0 : 1, 
-        transition: 'opacity 0.2s' 
+        transition: 'opacity 0.2s',
+        zIndex: 10
       }
     },
       React.createElement('div', { className: 'text-white text-4xl' }, '▶')
-    )
+    ),
+    // Top-right corner play symbol
+    React.createElement('div', {
+      className: 'absolute top-2 right-2 text-white drop-shadow text-sm',
+      style: { zIndex: 10 }
+    }, '▶')
   );
 };
 
