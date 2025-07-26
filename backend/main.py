@@ -59,19 +59,25 @@ CONVERTIBLE_VIDEO_EXTENSIONS = {'.avi', '.wmv', '.flv'}
 # Thumbnail cache and processing state
 thumbnail_cache = {}
 thumbnail_processing = set()
+thumbnail_queued = set()  # Track items already in queue to prevent duplicates
 thumbnail_queue = asyncio.PriorityQueue()  # Changed to PriorityQueue
-thumbnail_executor = ThreadPoolExecutor(max_workers=6)  # Increased from 3 to 6
-MAX_CONCURRENT_THUMBNAILS = 6  # Increased from 3 to 6
+thumbnail_executor = ThreadPoolExecutor(max_workers=4)  # Reduced from 6 to 4 to leave resources for conversions
+MAX_CONCURRENT_THUMBNAILS = 4  # Reduced from 6 to 4
 
 # Conversion cache and processing state
 conversion_cache = {}
 conversion_processing = set()
 conversion_queue = asyncio.Queue()
-conversion_executor = ThreadPoolExecutor(max_workers=1)  # Dedicated pool for conversions
-MAX_CONCURRENT_CONVERSIONS = 1  # Only one conversion at a time to prevent resource overload
+conversion_executor = ThreadPoolExecutor(max_workers=2)  # Increased from 1 to 2 for better throughput
+MAX_CONCURRENT_CONVERSIONS = 2  # Increased from 1 to 2
 
 # Track current folder for thumbnail priority
 current_folder = None
+
+# Resource management - prevent both systems from overwhelming the system
+MAX_TOTAL_FFMPEG_PROCESSES = 6  # Total FFmpeg processes across both systems
+current_ffmpeg_processes = 0
+ffmpeg_semaphore = asyncio.Semaphore(MAX_TOTAL_FFMPEG_PROCESSES)
 
 def get_file_type(file_path: Path) -> str:
     """Determine if file is image or video based on extension and magic bytes."""
@@ -220,15 +226,18 @@ async def process_thumbnail_queue():
             
             # Start processing
             thumbnail_processing.add(file_path)
+            thumbnail_queued.discard(file_path)  # Remove from queued set
             print(f"🔄 Started processing {file_path}")
             
             try:
-                # Run thumbnail generation in dedicated thread pool with timeout
-                loop = asyncio.get_event_loop()
-                await asyncio.wait_for(
-                    loop.run_in_executor(thumbnail_executor, generate_thumbnail_background_sync, file_path),
-                    timeout=30.0  # 30 second timeout for the entire operation
-                )
+                # Acquire FFmpeg semaphore to prevent resource overload
+                async with ffmpeg_semaphore:
+                    # Run thumbnail generation in dedicated thread pool with timeout
+                    loop = asyncio.get_event_loop()
+                    await asyncio.wait_for(
+                        loop.run_in_executor(thumbnail_executor, generate_thumbnail_background_sync, file_path),
+                        timeout=30.0  # 30 second timeout for the entire operation
+                    )
                 print(f"✅ Completed processing {file_path}")
             except asyncio.TimeoutError:
                 print(f"⏰ Timeout processing thumbnail for {file_path}")
@@ -247,18 +256,23 @@ async def process_thumbnail_queue():
 
 async def process_conversion_queue():
     """Process video conversion queue in the background."""
+    print("🔄 Conversion queue processor started")
     while True:
         try:
+            print(f"🔍 Waiting for conversion queue item... (queue size: {conversion_queue.qsize()})")
             # Get next item from queue
             file_path = await conversion_queue.get()
+            print(f"📥 Processing conversion: {file_path}")
             
             # Check if we're already processing this file
             if file_path in conversion_processing:
+                print(f"⏭️ Already processing {file_path}, skipping")
                 conversion_queue.task_done()
                 continue
             
             # Check if we have too many concurrent conversions
             if len(conversion_processing) >= MAX_CONCURRENT_CONVERSIONS:
+                print(f"⏳ Too many concurrent conversions ({len(conversion_processing)}), putting back in queue")
                 # Put it back in the queue for later
                 await conversion_queue.put(file_path)
                 await asyncio.sleep(1)  # Wait a bit before trying again
@@ -266,16 +280,31 @@ async def process_conversion_queue():
             
             # Start processing
             conversion_processing.add(file_path)
+            print(f"🔄 Started processing conversion for {file_path}")
             
-            # Run conversion in dedicated thread pool
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(conversion_executor, convert_video_background_sync, file_path)
-            
-            # Mark task as done
-            conversion_queue.task_done()
+            try:
+                # Acquire FFmpeg semaphore to prevent resource overload
+                async with ffmpeg_semaphore:
+                    # Run conversion in dedicated thread pool with timeout
+                    loop = asyncio.get_event_loop()
+                    await asyncio.wait_for(
+                        loop.run_in_executor(conversion_executor, convert_video_background_sync, file_path),
+                        timeout=300.0  # 5 minute timeout for conversion operations
+                    )
+                print(f"✅ Completed conversion for {file_path}")
+            except asyncio.TimeoutError:
+                print(f"⏰ Timeout processing conversion for {file_path}")
+            except Exception as e:
+                print(f"❌ Error processing conversion for {file_path}: {e}")
+            finally:
+                # Always remove from processing set, even if there was an error
+                conversion_processing.discard(file_path)
+                conversion_queue.task_done()
+                print(f"🧹 Removed {file_path} from conversion processing set")
             
         except Exception as e:
-            print(f"Error in conversion queue processor: {e}")
+            print(f"❌ Error in conversion queue processor: {e}")
+            # Make sure we don't get stuck in an infinite loop
             await asyncio.sleep(1)
 
 def generate_thumbnail_background_sync(file_path: str):
@@ -297,15 +326,18 @@ def generate_thumbnail_background_sync(file_path: str):
         thumbnail_data = generate_video_thumbnail_sync(full_path)
         
         if thumbnail_data:
+            # Cache the thumbnail
             cache_key = get_thumbnail_cache_key(file_path)
             thumbnail_cache[cache_key] = thumbnail_data
-            print(f"Generated thumbnail for {file_path}")
+            print(f"✅ Thumbnail generated and cached for {file_path}")
         else:
-            print(f"Failed to generate thumbnail for {file_path}")
+            print(f"❌ Failed to generate thumbnail for {file_path}")
             
     except Exception as e:
-        print(f"Error in background thumbnail generation for {file_path}: {e}")
-        # Don't remove from processing set here - the queue processor handles that
+        print(f"❌ Error in background thumbnail generation for {file_path}: {e}")
+    finally:
+        # Remove from processing set
+        thumbnail_processing.discard(file_path)
 
 def convert_video_background_sync(file_path: str):
     """Synchronous version of background video conversion for thread pool."""
@@ -327,28 +359,38 @@ def convert_video_background_sync(file_path: str):
         conversion_dir.mkdir(exist_ok=True)
         output_path = conversion_dir / get_converted_filename(full_path)
         
-        # FFmpeg command for fast conversion
+        # Check if already converted
+        if output_path.exists():
+            cache_key = f"{file_path}_converted"
+            conversion_cache[cache_key] = output_path
+            print(f"✅ Found existing conversion for {file_path}")
+            return
+        
+        # FFmpeg command for fast conversion with resource limits
         cmd = [
             'ffmpeg', '-i', str(full_path),
             '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32',
-            '-threads', '0', '-c:a', 'aac', '-b:a', '32k', '-ac', '1',
+            '-threads', '2',  # Limit threads to prevent resource overload
+            '-c:a', 'aac', '-b:a', '32k', '-ac', '1',
             '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov',
             str(output_path)
         ]
         
-        # Run conversion
+        # Run conversion with timeout
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minute timeout
         
         if result.returncode == 0 and output_path.exists():
             # Cache the converted file
             cache_key = f"{file_path}_converted"
             conversion_cache[cache_key] = output_path
-            print(f"Converted video for {file_path}")
+            print(f"✅ Converted video for {file_path}")
         else:
-            print(f"Failed to convert video for {file_path}: {result.stderr}")
+            print(f"❌ Failed to convert video for {file_path}: {result.stderr}")
             
+    except subprocess.TimeoutExpired:
+        print(f"⏰ Timeout converting video for {file_path}")
     except Exception as e:
-        print(f"Error in background video conversion for {file_path}: {e}")
+        print(f"❌ Error in background video conversion for {file_path}: {e}")
     finally:
         # Remove from processing set
         conversion_processing.discard(file_path)
@@ -380,7 +422,7 @@ def set_current_folder(folder_path: str):
 
 def clear_thumbnail_queue():
     """Clear the thumbnail queue to prioritize current folder."""
-    global thumbnail_queue
+    global thumbnail_queue, thumbnail_queued
     # Clear the existing queue by getting all items and discarding them
     while not thumbnail_queue.empty():
         try:
@@ -388,6 +430,8 @@ def clear_thumbnail_queue():
             thumbnail_queue.task_done()
         except asyncio.QueueEmpty:
             break
+    # Clear the queued set as well
+    thumbnail_queued.clear()
     print("Thumbnail queue cleared for new folder priority")
 
 def is_current_folder_file(file_path: str) -> bool:
@@ -398,18 +442,22 @@ def is_current_folder_file(file_path: str) -> bool:
 
 def submit_thumbnail_with_priority(file_path: str, background_tasks: BackgroundTasks):
     """Submit thumbnail generation with priority for current folder."""
-    if file_path not in thumbnail_processing:
+    if file_path not in thumbnail_processing and file_path not in thumbnail_queued:
         # Check if this is a current folder file
         if is_current_folder_file(file_path):
             # For current folder, add with high priority (lower number = higher priority)
             priority = 1
             asyncio.create_task(thumbnail_queue.put((priority, file_path)))
+            thumbnail_queued.add(file_path)  # Mark as queued
             print(f"Priority thumbnail queued for current folder: {file_path} (priority: {priority})")
         else:
             # For other folders, add with lower priority
             priority = 10
             asyncio.create_task(thumbnail_queue.put((priority, file_path)))
+            thumbnail_queued.add(file_path)  # Mark as queued
             print(f"Regular thumbnail queued: {file_path} (priority: {priority})")
+    else:
+        print(f"Thumbnail already queued or processing: {file_path}")
 
 @app.get("/")
 async def root():
@@ -432,7 +480,13 @@ async def health_check():
         "conversion_cache_size": len(conversion_cache),
         "conversion_executor_workers": conversion_executor._max_workers,
         "current_folder": current_folder,
-        "separate_executors": True
+        "resource_management": {
+            "max_total_ffmpeg_processes": MAX_TOTAL_FFMPEG_PROCESSES,
+            "ffmpeg_semaphore_available": ffmpeg_semaphore._value,
+            "separate_executors": True,
+            "thumbnail_workers": MAX_CONCURRENT_THUMBNAILS,
+            "conversion_workers": MAX_CONCURRENT_CONVERSIONS
+        }
     }
 
 @app.get("/api/folders")
@@ -541,13 +595,17 @@ async def get_video_thumbnail(file_path: str, background_tasks: BackgroundTasks)
         if cache_key in thumbnail_cache:
             return {"thumbnail": thumbnail_cache[cache_key], "cached": True}
         
-        # If not in cache and not currently processing, submit to queue with priority
-        if file_path not in thumbnail_processing:
-            submit_thumbnail_with_priority(file_path, background_tasks)
-            return {"status": "queued", "message": "Thumbnail generation queued"}
+        # Check if currently processing
+        if file_path in thumbnail_processing:
+            return {"status": "processing", "message": "Thumbnail is being generated"}
         
-        # If currently processing, return processing status
-        return {"status": "processing", "message": "Thumbnail is being generated"}
+        # Check if already in queue
+        if file_path in thumbnail_queued:
+            return {"status": "queued", "message": "Thumbnail generation already queued"}
+        
+        # If not in cache, not processing, and not in queue, submit to queue with priority
+        submit_thumbnail_with_priority(file_path, background_tasks)
+        return {"status": "queued", "message": "Thumbnail generation queued"}
             
     except HTTPException:
         raise
