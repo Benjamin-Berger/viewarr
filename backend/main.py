@@ -67,8 +67,8 @@ def generate_video_thumbnail_sync(video_path: Path) -> str:
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
             temp_thumbnail_path = temp_file.name
         
-        # Try 5 seconds first, then fallback to 1 second
-        for seek_time in ['00:00:05', '00:00:01']:
+        # Try 5 seconds first, then fallback to 1 second, then 0.1 seconds
+        for seek_time in ['00:00:05', '00:00:01', '00:00:00.1']:
             # Use ffmpeg to generate thumbnail at specified time with low resolution
             cmd = [
                 'ffmpeg', '-i', str(video_path), '-ss', seek_time, 
@@ -78,15 +78,26 @@ def generate_video_thumbnail_sync(video_path: Path) -> str:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
             
             if result.returncode == 0 and os.path.exists(temp_thumbnail_path):
-                # Read the thumbnail and convert to base64
-                with open(temp_thumbnail_path, 'rb') as f:
-                    thumbnail_data = f.read()
-                
-                # Clean up temporary file
-                os.unlink(temp_thumbnail_path)
-                
-                # Return base64 encoded thumbnail
-                return f"data:image/jpeg;base64,{base64.b64encode(thumbnail_data).decode()}"
+                # Check if the thumbnail file has content
+                if os.path.getsize(temp_thumbnail_path) > 0:
+                    # Read the thumbnail and convert to base64
+                    with open(temp_thumbnail_path, 'rb') as f:
+                        thumbnail_data = f.read()
+                    
+                    # Clean up temporary file
+                    os.unlink(temp_thumbnail_path)
+                    
+                    # Return base64 encoded thumbnail
+                    return f"data:image/jpeg;base64,{base64.b64encode(thumbnail_data).decode()}"
+                else:
+                    # Empty file, try next seek time
+                    os.unlink(temp_thumbnail_path)
+            else:
+                # Log the error for debugging
+                print(f"FFmpeg error for {video_path} at {seek_time}: {result.stderr}")
+                # Clean up if file exists
+                if os.path.exists(temp_thumbnail_path):
+                    os.unlink(temp_thumbnail_path)
         
         # If both attempts failed, return None
         return None
@@ -147,6 +158,16 @@ def submit_thumbnail_generation(file_path: str, background_tasks: BackgroundTask
 @app.get("/")
 async def root():
     return {"message": "Photo Viewer API", "version": "1.0.0"}
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint to verify the API is running."""
+    return {
+        "status": "healthy",
+        "ffmpeg_available": subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode == 0,
+        "photos_dir": PHOTOS_DIR,
+        "photos_dir_exists": os.path.exists(PHOTOS_DIR)
+    }
 
 @app.get("/api/folders")
 async def list_folders() -> List[Dict[str, Any]]:
