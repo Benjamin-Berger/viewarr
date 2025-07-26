@@ -173,8 +173,8 @@ const VideoThumbnail = ({ photo, imageSize, isMuted, setHoveredVideo, hoveredVid
             // Immediate response (cached)
             setThumbnail(data.thumbnail);
             setThumbnailStatus('ready');
-          } else if (data.status === 'processing') {
-            // Started processing, begin polling
+          } else if (data.status === 'processing' || data.status === 'queued') {
+            // Started processing or queued, begin polling
             setThumbnailStatus('processing');
             startThumbnailPolling();
           }

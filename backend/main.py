@@ -18,6 +18,11 @@ import json
 
 app = FastAPI(title="Photo Viewer API", version="1.0.0")
 
+@app.on_event("startup")
+async def startup_event():
+    """Start the thumbnail queue processor on app startup."""
+    asyncio.create_task(process_thumbnail_queue())
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -38,7 +43,9 @@ SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 # Thumbnail cache and processing state
 thumbnail_cache = {}
 thumbnail_processing = set()
-executor = ThreadPoolExecutor(max_workers=4)  # Limit concurrent thumbnail generation
+thumbnail_queue = asyncio.Queue()
+executor = ThreadPoolExecutor(max_workers=2)  # Reduce concurrent workers to prevent blocking
+MAX_CONCURRENT_THUMBNAILS = 2  # Limit concurrent thumbnail generation
 
 def get_file_type(file_path: Path) -> str:
     """Determine if file is image or video based on extension and magic bytes."""
@@ -149,11 +156,75 @@ async def generate_thumbnail_background(file_path: str):
         # Remove from processing set
         thumbnail_processing.discard(file_path)
 
+async def process_thumbnail_queue():
+    """Process thumbnail generation queue in the background."""
+    while True:
+        try:
+            # Get next item from queue
+            file_path = await thumbnail_queue.get()
+            
+            # Check if we're already processing this file
+            if file_path in thumbnail_processing:
+                thumbnail_queue.task_done()
+                continue
+            
+            # Check if we have too many concurrent thumbnails
+            if len(thumbnail_processing) >= MAX_CONCURRENT_THUMBNAILS:
+                # Put it back in the queue for later
+                await thumbnail_queue.put(file_path)
+                await asyncio.sleep(1)  # Wait a bit before trying again
+                continue
+            
+            # Start processing
+            thumbnail_processing.add(file_path)
+            
+            # Run thumbnail generation in thread pool
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(executor, generate_thumbnail_background_sync, file_path)
+            
+            # Mark task as done
+            thumbnail_queue.task_done()
+            
+        except Exception as e:
+            print(f"Error in thumbnail queue processor: {e}")
+            await asyncio.sleep(1)
+
+def generate_thumbnail_background_sync(file_path: str):
+    """Synchronous version of background thumbnail generation for thread pool."""
+    try:
+        # URL decode the file path
+        from urllib.parse import unquote
+        decoded_file_path = unquote(file_path)
+        full_path = Path(PHOTOS_DIR) / decoded_file_path
+        
+        if not full_path.exists() or not full_path.is_file():
+            return
+        
+        # Only generate thumbnails for video files
+        if full_path.suffix.lower() not in VIDEO_EXTENSIONS:
+            return
+        
+        # Generate thumbnail
+        thumbnail_data = generate_video_thumbnail_sync(full_path)
+        
+        if thumbnail_data:
+            cache_key = get_thumbnail_cache_key(file_path)
+            thumbnail_cache[cache_key] = thumbnail_data
+            print(f"Generated thumbnail for {file_path}")
+        else:
+            print(f"Failed to generate thumbnail for {file_path}")
+            
+    except Exception as e:
+        print(f"Error in background thumbnail generation for {file_path}: {e}")
+    finally:
+        # Remove from processing set
+        thumbnail_processing.discard(file_path)
+
 def submit_thumbnail_generation(file_path: str, background_tasks: BackgroundTasks):
-    """Submit thumbnail generation to background task if not already processing."""
+    """Submit thumbnail generation to queue if not already processing."""
     if file_path not in thumbnail_processing:
-        thumbnail_processing.add(file_path)
-        background_tasks.add_task(generate_thumbnail_background, file_path)
+        # Add to queue instead of directly starting
+        asyncio.create_task(thumbnail_queue.put(file_path))
 
 @app.get("/")
 async def root():
@@ -166,7 +237,10 @@ async def health_check():
         "status": "healthy",
         "ffmpeg_available": subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode == 0,
         "photos_dir": PHOTOS_DIR,
-        "photos_dir_exists": os.path.exists(PHOTOS_DIR)
+        "photos_dir_exists": os.path.exists(PHOTOS_DIR),
+        "thumbnail_queue_size": thumbnail_queue.qsize(),
+        "thumbnail_processing_count": len(thumbnail_processing),
+        "thumbnail_cache_size": len(thumbnail_cache)
     }
 
 @app.get("/api/folders")
@@ -275,10 +349,10 @@ async def get_video_thumbnail(file_path: str, background_tasks: BackgroundTasks)
         if cache_key in thumbnail_cache:
             return {"thumbnail": thumbnail_cache[cache_key], "cached": True}
         
-        # If not in cache and not currently processing, submit to background task
+        # If not in cache and not currently processing, submit to queue
         if file_path not in thumbnail_processing:
             submit_thumbnail_generation(file_path, background_tasks)
-            return {"status": "processing", "message": "Thumbnail generation started"}
+            return {"status": "queued", "message": "Thumbnail generation queued"}
         
         # If currently processing, return processing status
         return {"status": "processing", "message": "Thumbnail is being generated"}
@@ -339,6 +413,8 @@ async def get_thumbnail_cache_status():
     return {
         "cache_size": len(thumbnail_cache),
         "processing_count": len(thumbnail_processing),
+        "queue_size": thumbnail_queue.qsize(),
+        "max_concurrent": MAX_CONCURRENT_THUMBNAILS,
         "cache_keys": list(thumbnail_cache.keys())[:10],  # Show first 10 keys
         "processing_files": list(thumbnail_processing)[:10]  # Show first 10 processing files
     }
